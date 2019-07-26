@@ -1,6 +1,6 @@
 #********************IMPORTANT DRAKVUF LICENSE TERMS**********************#
 #                                                                         #
-# DRAKVUF (C) 2014-2018 Tamas K Lengyel.                                  #
+# DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  #
 # Tamas K Lengyel is hereinafter referred to as the author.               #
 # This program is free software; you may redistribute and/or modify it    #
 # under the terms of the GNU General Public License as published by the   #
@@ -256,6 +256,86 @@ if test x$plugin_bsodmon = xyes; then
   AC_DEFINE_UNQUOTED(ENABLE_PLUGIN_BSODMON, 1, "")
 fi
 
+AC_ARG_ENABLE([plugin_envmon],
+  [AS_HELP_STRING([--disable-plugin-envmon],
+    [Enable the windows environment watching plugin @<:@yes@:>@])],
+  [plugin_envmon="$enableval"],
+  [plugin_envmon="yes"])
+AM_CONDITIONAL([PLUGIN_ENVMON], [test x$plugin_envmon = xyes])
+if test x$plugin_envmon = xyes; then
+  AC_DEFINE_UNQUOTED(ENABLE_PLUGIN_ENVMON, 1, "")
+fi
+
+AC_ARG_ENABLE([plugin_crashmon],
+  [AS_HELP_STRING([--disable-plugin-crashmon],
+    [Enable the windows error reporting tool WerFault.exe watching plugin @<:@yes@:>@])],
+  [plugin_crashmon="$enableval"],
+  [plugin_crashmon="yes"])
+AM_CONDITIONAL([PLUGIN_CRASHMON], [test x$plugin_crashmon = xyes])
+if test x$plugin_crashmon = xyes; then
+  AC_DEFINE_UNQUOTED(ENABLE_PLUGIN_CRASHMON, 1, "")
+fi
+
+AC_ARG_ENABLE([plugin_clipboardmon],
+  [AS_HELP_STRING([--disable-plugin-clipboardmon],
+    [Enable the clipboard tracing plugin @<:@yes@:>@])],
+  [plugin_clipboardmon="$enableval"],
+  [plugin_clipboardmon="yes"])
+AM_CONDITIONAL([PLUGIN_CLIPBOARDMON], [test x$plugin_clipboardmon = xyes])
+if test x$plugin_clipboardmon = xyes; then
+  AC_DEFINE_UNQUOTED(ENABLE_PLUGIN_CLIPBOARDMON, 1, "")
+fi
+
+AC_ARG_ENABLE([plugin_windowmon],
+  [AS_HELP_STRING([--disable-plugin-windowmon],
+    [Enable the windows tracing plugin @<:@yes@:>@])],
+  [plugin_windowmon="$enableval"],
+  [plugin_windowmon="yes"])
+AM_CONDITIONAL([PLUGIN_WINDOWMON], [test x$plugin_windowmon = xyes])
+if test x$plugin_windowmon = xyes; then
+  AC_DEFINE_UNQUOTED(ENABLE_PLUGIN_WINDOWMON, 1, "")
+fi
+
+AC_ARG_ENABLE([plugin_librarymon],
+  [AS_HELP_STRING([--disable-plugin-librarymon],
+    [Enable the windows kernel bugcheck watching plugin @<:@yes@:>@])],
+  [plugin_librarymon="$enableval"],
+  [plugin_librarymon="yes"])
+AM_CONDITIONAL([PLUGIN_LIBRARYMON], [test x$plugin_librarymon = xyes])
+if test x$plugin_librarymon = xyes; then
+  AC_DEFINE_UNQUOTED(ENABLE_PLUGIN_LIBRARYMON, 1, "")
+fi
+
+AC_ARG_ENABLE([plugin_dkommon],
+  [AS_HELP_STRING([--disable-plugin-dkommon],
+    [Enable the windows DKOM attacks watching plugin @<:@yes@:>@])],
+  [plugin_dkommon="$enableval"],
+  [plugin_dkommon="yes"])
+AM_CONDITIONAL([PLUGIN_DKOMMON], [test x$plugin_dkommon = xyes])
+if test x$plugin_dkommon = xyes; then
+  AC_DEFINE_UNQUOTED(ENABLE_PLUGIN_DKOMMON, 1, "")
+fi
+
+AC_ARG_ENABLE([plugin_wmimon],
+  [AS_HELP_STRING([--disable-plugin-wmimon],
+    [Enable the windows kernel bugcheck watching plugin @<:@yes@:>@])],
+  [plugin_wmimon="$enableval"],
+  [plugin_wmimon="yes"])
+AM_CONDITIONAL([PLUGIN_WMIMON], [test x$plugin_wmimon = xyes])
+if test x$plugin_wmimon = xyes; then
+  AC_DEFINE_UNQUOTED(ENABLE_PLUGIN_WMIMON, 1, "")
+fi
+
+AC_ARG_ENABLE([plugin_memdump],
+  [AS_HELP_STRING([--disable-plugin-memdump],
+    [Enable the windows memory dumping plugin @<:@yes@:>@])],
+  [plugin_memdump="$enableval"],
+  [plugin_memdump="yes"])
+AM_CONDITIONAL([PLUGIN_MEMDUMP], [test x$plugin_memdump = xyes])
+if test x$plugin_memdump = xyes; then
+  AC_DEFINE_UNQUOTED(ENABLE_PLUGIN_MEMDUMP, 1, "")
+fi
+
 #####################################################
 
 AC_ARG_ENABLE([hardening],
@@ -271,6 +351,13 @@ AC_ARG_ENABLE([debug],
   [debug="$enableval"],
   [debug="no"])
 AM_CONDITIONAL([DEBUG], [test x$debug = xyes])
+
+AC_ARG_ENABLE([sanitize],
+  [AS_HELP_STRING([--enable-sanitize],
+    [Enable sanitizers to be compiled @<:@no@:>@])],
+  [sanitize="$enableval"],
+  [sanitize="no"])
+AM_CONDITIONAL([SANITIZE], [test x$sanitize = xyes])
 
 AC_ARG_ENABLE([doppelganging],
   [AS_HELP_STRING([--enable-doppelganging-injection],
@@ -354,6 +441,46 @@ LD="$saved_LD"
 # AUTOHARDEN END
 #####################################################
 
+#####################################################
+# AUTOSANITIZE START
+
+saved_CC="$CC"
+saved_CXX="$CXX"
+saved_LD="$LD"
+flag_wrap="$srcdir/scripts/wrap-compiler-for-flag-check"
+CC="$flag_wrap $CC"
+CXX="$flag_wrap $CXX"
+LD="$flag_wrap $LD"
+
+SANITIZE_CFLAGS=""
+SANITIZE_CXXFLAGS=""
+SANITIZE_LDFLAGS=""
+
+AS_IF([test x"$fsanitize" != x"no"], [
+  check_cc_cxx_flag([-fsanitize=address],
+   [check_link_flag([-fsanitize=address],
+     [SANITIZE_CFLAGS="$SANITIZE_CFLAGS -fsanitize=address"
+      SANITIZE_CXXFLAGS="$SANITIZE_CXXFLAGS -fsanitize=address"
+      SANITIZE_LDFLAGS="$SANITIZE_LDFLAGS -fsanitize=address"])])
+
+  check_cc_cxx_flag([-fsanitize=leak],
+   [check_link_flag([-fsanitize=leak],
+     [SANITIZE_CFLAGS="$SANITIZE_CFLAGS -fsanitize=leak"
+      SANITIZE_CXXFLAGS="$SANITIZE_CXXFLAGS -fsanitize=leak"
+      SANITIZE_LDFLAGS="$SANITIZE_LDFLAGS -fsanitize=leak"])])
+])
+
+AC_SUBST([SANITIZE_CFLAGS])
+AC_SUBST([SANITIZE_CXXFLAGS])
+AC_SUBST([SANITIZE_LDFLAGS])
+
+# End of flag tests.
+CC="$saved_CC"
+CXX="$saved_CXX"
+LD="$saved_LD"
+# AUTOSANITIZE END
+#####################################################
+
 AC_HEADER_STDC
 AC_CHECK_HEADERS([fcntl.h malloc.h stdio.h stdlib.h string.h sys/time.h sys/mman.h sys/inotify.h syslog.h unistd.h errno.h pthread.h])
 
@@ -377,15 +504,8 @@ AH_VERBATIM([__STDC_FORMAT_MACROS],
 AC_CHECK_LIB(pthread, pthread_create, [], [AC_ERROR([Pthread library is not functional!])])
 
 PKG_CHECK_MODULES([GLIB], [glib-2.0 >= 2.28], [], [AC_ERROR([glib-2.0 (version 2.28+) has to be installed!])])
-AC_CHECK_LIB(glib-2.0, [g_malloc0, g_tree_lookup], [], [AC_ERROR([glib-2.0 library is not functional!])]) 
-
 PKG_CHECK_MODULES([VMI], [libvmi >= 0.11], [], [AC_ERROR([LibVMI not found])])
-AC_CHECK_HEADERS([libvmi/events.h], [], [AC_ERROR([LibVMI doesn't have events support.])], [#include <libvmi/libvmi.h>])
-AC_CHECK_LIB(vmi, [vmi_register_event], [], [AC_ERROR([LibVMI doesn't have required events support. Please update LibVMI!])])
-AC_CHECK_LIB(vmi, [vmi_events_version], [], [AC_ERROR([LibVMI doesn't have required events support. Please update LibVMI!])])
-
-AC_CHECK_LIB(json-c, json_object_get_int64,, [AC_ERROR([libjson-c-dev is missing])])
-AC_CHECK_HEADERS([json-c/json.h], [], [AC_ERROR([libjson-c-dev is missing])])
+PKG_CHECK_MODULES([JSONC], [json-c], [], [AC_ERROR([libjson-c not found])])
 
 AC_CHECK_LIB([xencall], [xencall_buffers_never_fault])
 AC_CHECK_LIB([xenforeignmemory], [xenforeignmemory_map_resource])
@@ -394,15 +514,8 @@ AC_CHECK_LIB([xenforeignmemory], [xenforeignmemory_map_resource])
 #AC_CHECK_LIB(xenstore, [xc_read, xs_transaction_start], [], [AC_ERROR([Xenstore not found!])])
 
 # Check for Xenctrl
-AC_CHECK_HEADERS([xenctrl.h], [], [AC_ERROR([XenCtrl missing! Did you install Xen yet?])])
-AC_CHECK_LIB([xenctrl],
-	[xc_interface_open, xc_monitor_debug_exceptions],
-	[], [AC_ERROR([XenCtrl is unusable! Do you have Xen 4.7 installed?])])
-
-# Check for memsharing
-AC_CHECK_LIB([xenctrl],
-	[xc_memshr_control, xc_memshr_nominate_gfn, xc_memshr_share_gfns],
-	[], [AC_ERROR([XenCtrl is unusable! Do you have Xen 4.2+ installed?])])
+AC_CHECK_HEADERS([xenctrl.h], [], [AC_ERROR([XenCtrl missing! Did you install libxc yet?])])
+AC_CHECK_LIB([xenctrl], [xc_interface_open], [], [AC_ERROR([XenCtrl is unusable! Do you have libxc installed?])])
 
 AC_CHECK_HEADERS([libxl_utils.h], [], [AC_ERROR([Xenlight (libxl) headers are not usable])])
 AC_CHECK_LIB(xenlight, libxl_name_to_domid, [], [AC_ERROR([Xenlight does not have required features!])])
@@ -430,17 +543,25 @@ Build system type: $build
 Installation prefix: $prefix
 -------------------------------------------------------------------------------
 DRAKVUF Plugins
-Syscalls:   $plugin_syscalls
-Poolmon:    $plugin_poolmon
-Filetracer: $plugin_filetracer
-Filedelete: $plugin_filedelete
-Objmon:     $plugin_objmon
-Exmon:      $plugin_exmon
-SSDTmon:    $plugin_ssdtmon
-CPUIDmon:   $plugin_cpuidmon
-Debugmon:   $plugin_debugmon
-Socketmon:  $plugin_socketmon
-Regmon:     $plugin_regmon
-Procmon:    $plugin_procmon
-BSODmon:    $plugin_bsodmon
+Syscalls:     $plugin_syscalls
+Poolmon:      $plugin_poolmon
+Filetracer:   $plugin_filetracer
+Filedelete:   $plugin_filedelete
+Objmon:       $plugin_objmon
+Exmon:        $plugin_exmon
+SSDTmon:      $plugin_ssdtmon
+CPUIDmon:     $plugin_cpuidmon
+Debugmon:     $plugin_debugmon
+Socketmon:    $plugin_socketmon
+Regmon:       $plugin_regmon
+Procmon:      $plugin_procmon
+BSODmon:      $plugin_bsodmon
+EnvMon:       $plugin_envmon
+CrashMon:     $plugin_crashmon
+ClipboardMon: $plugin_clipboardmon
+WindowMon:    $plugin_windowmon
+LibraryMon:   $plugin_librarymon
+DKOMmon:      $plugin_dkommon
+WMIMon:       $plugin_wmimon
+MEMDump:      $plugin_memdump
 -------------------------------------------------------------------------------])

@@ -1,6 +1,6 @@
 #********************IMPORTANT DRAKVUF LICENSE TERMS**********************#
 #                                                                         #
-# DRAKVUF (C) 2014-2016 Tamas K Lengyel.                                  #
+# DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  #
 # Tamas K Lengyel is hereinafter referred to as the author.               #
 # This program is free software; you may redistribute and/or modify it    #
 # under the terms of the GNU General Public License as published by the   #
@@ -115,7 +115,7 @@ sources += poolmon/poolmon.cpp
 endif
 
 if PLUGIN_FILETRACER
-sources += filetracer/filetracer.cpp
+sources += filetracer/filetracer.cpp filetracer/win_acl.cpp
 endif
 
 if PLUGIN_FILEDELETE
@@ -155,33 +155,81 @@ sources += regmon/regmon.cpp
 endif
 
 if PLUGIN_PROCMON
-sources += procmon/procmon.cpp
+sources += procmon/procmon.cpp procmon/ntstatus.cpp procmon/winnt.cpp
 endif
 
 if PLUGIN_BSODMON
 sources += bsodmon/bsodmon.cpp bsodmon/bugcheck.cpp
 endif
 
+if PLUGIN_ENVMON
+sources += envmon/envmon.cpp
+endif
+
+if PLUGIN_CRASHMON
+sources += crashmon/crashmon.cpp
+endif
+
+if PLUGIN_CLIPBOARDMON
+sources += clipboardmon/clipboardmon.cpp
+endif
+
+if PLUGIN_WINDOWMON
+sources += windowmon/windowmon.cpp
+endif
+
+if PLUGIN_LIBRARYMON
+sources += librarymon/librarymon.cpp
+endif
+
+if PLUGIN_DKOMMON
+sources += dkommon/dkommon.cpp
+endif
+
+if PLUGIN_WMIMON
+sources += wmimon/wmimon.cpp
+endif
+
+if PLUGIN_MEMDUMP
+sources += memdump/memdump.cpp
+endif
+
 ###############################################################################
-sources += plugins.cpp plugins.h
+sources += plugins.cpp plugins.h plugins_ex.cpp plugins_ex.h plugin_utils.cpp plugin_utils.h
 
 AM_CPPFLAGS = -I$(top_srcdir) -I$(top_srcdir)/src -I$(srcdir)
 AM_CPPFLAGS += $(CPPFLAGS)
-AM_CPPFLAGS += $(CXXFLAGS)
 AM_CPPFLAGS += $(VMI_CFLAGS)
 AM_CPPFLAGS += $(GLIB_CFLAGS)
+AM_CPPFLAGS += $(JSONC_CFLAGS)
 
-#if HARDENING
-AM_CPPFLAGS += $(HARDEN_CFLAGS) -DHARDENING
-#endif
+AM_LDFLAGS =  $(LDFLAGS)
+AM_LDFLAGS += $(GLIB_LIBS)
+AM_LDFLAGS += $(VMI_LIBS)
+AM_LDFLAGS += $(JSONC_LIBS)
 
-# Note that -pg is incompatible with HARDENING
+AM_CXXFLAGS = $(CXXFLAGS)
+if HARDENING
+AM_CXXFLAGS += $(HARDEN_CFLAGS) -DHARDENING
+endif
+
+if SANITIZE
+AM_CXXFLAGS += $(SANITIZE_CFLAGS)
+AM_LDFLAGS += $(SANITIZE_LDFLAGS)
+endif
+
 if DEBUG
-AM_CPPFLAGS += -DDRAKVUF_DEBUG -Werror -Wall -Wextra -g -ggdb3
-AM_CPPFLAGS += -Wno-missing-field-initializers -Wno-unused-parameter
-AM_CPPFLAGS += -Wno-initializer-overrides
+AM_CXXFLAGS += -DDRAKVUF_DEBUG -Werror -Wall -Wextra -g -ggdb3
+AM_CXXFLAGS += -Wno-missing-field-initializers -Wno-unused-parameter
+AM_CXXFLAGS += -Wno-initializer-overrides
+AM_CXXFLAGS += -Wcast-qual -Wcast-align -Wstrict-aliasing \
+               -Wpointer-arith -Winit-self -Wshadow \
+               -Wswitch-enum -Wstrict-prototypes \
+               -Wmissing-prototypes -Wredundant-decls \
+               -Wfloat-equal -Wundef -Wvla
+# Note that -pg is incompatible with HARDENING
 if !HARDENING
-AM_CPPFLAGS += -pg
+AM_CXXFLAGS += -pg
 endif
 endif
 

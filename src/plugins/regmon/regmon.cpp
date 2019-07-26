@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
 *                                                                         *
-* DRAKVUF (C) 2014-2017 Tamas K Lengyel.                                  *
+* DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
 * Tamas K Lengyel is hereinafter referred to as the author.               *
 * This program is free software; you may redistribute and/or modify it    *
 * under the terms of the GNU General Public License as published by the   *
@@ -137,6 +137,8 @@ enum RegistryValueTypes
 static void print_registry_call_info(drakvuf_t drakvuf, drakvuf_trap_info_t* info, char const* key_name, char const* value_name, char const* value)
 {
     regmon* reg = (regmon*)info->trap->data;
+    gchar* escaped_pname = NULL;
+    gchar* escaped_key = NULL;
 
     switch ( reg->format )
     {
@@ -159,6 +161,45 @@ static void print_registry_call_info(drakvuf_t drakvuf, drakvuf_trap_info_t* inf
             if (value)
                 printf(",Value=\"%s\"", value);
             printf("\n");
+            break;
+
+        case OUTPUT_JSON:
+            escaped_pname = drakvuf_escape_str(info->proc_data.name);
+            escaped_key   = drakvuf_escape_str(key_name);
+
+            printf( "{"
+                    "\"Plugin\" : \"regmon\","
+                    "\"TimeStamp\" :" "\"" FORMAT_TIMEVAL "\","
+                    "\"ProcessName\": %s,"
+                    "\"UserName\": \"%s\","
+                    "\"UserId\": %" PRIu64 ","
+                    "\"PID\" : %d,"
+                    "\"PPID\": %d,"
+                    "\"Method\" : \"%s\","
+                    "\"Key\" : %s",
+                    UNPACK_TIMEVAL(info->timestamp),
+                    escaped_pname,
+                    USERIDSTR(drakvuf), info->proc_data.userid,
+                    info->proc_data.pid, info->proc_data.ppid,
+                    info->trap->name,
+                    escaped_key);
+            if (value_name)
+            {
+                gchar* escaped_vname = drakvuf_escape_str(value_name);
+                printf(",\"ValueName\":%s", escaped_vname);
+                g_free(escaped_vname);
+            }
+            if (value)
+            {
+                gchar* escaped_val = drakvuf_escape_str(value);
+                printf(",\"Value\":%s", escaped_val);
+                g_free(escaped_val);
+            }
+
+            printf("}\n");
+
+            g_free(escaped_key);
+            g_free(escaped_pname);
             break;
 
         default:
@@ -359,11 +400,15 @@ static event_response_t log_reg_key_value_data( drakvuf_t drakvuf, drakvuf_trap_
         uint32_t type, addr_t data_addr, size_t data_size )
 {
     unicode_string_t* data_us = get_data_as_string(drakvuf, info, type, data_addr, data_size);
-    char const* data = data_us ? (char const*)data_us->contents : nullptr;
 
+    if ( !data_us )
+        return 0;
+
+    char const* data = (char const*)data_us->contents;
     auto status = log_reg_impl( drakvuf, info, key_handle, value_name_addr, true, data );
 
-    if (data_us) vmi_free_unicode_str(data_us);
+    free(data_us->contents);
+    free(data_us);
 
     return status;
 }
@@ -639,10 +684,9 @@ static void register_trap( drakvuf_t drakvuf, const char* syscall_name,
     if ( ! drakvuf_add_trap( drakvuf, trap ) ) throw -1;
 }
 
-regmon::regmon(drakvuf_t drakvuf, const void* config, output_format_t output)
+regmon::regmon(drakvuf_t drakvuf, output_format_t output)
+    : format{output}
 {
-    this->format = output;
-
     if ( !drakvuf_get_struct_member_rva(drakvuf, "_OBJECT_ATTRIBUTES", "ObjectName", &this->objattr_name) )
         throw -1;
     if ( !drakvuf_get_struct_member_rva(drakvuf, "_OBJECT_ATTRIBUTES", "RootDirectory", &this->objattr_root) )
@@ -661,7 +705,7 @@ regmon::regmon(drakvuf_t drakvuf, const void* config, output_format_t output)
     register_trap(drakvuf, "NtOpenKeyTransacted",    &traps[9],  open_key_transacted_cb);
     register_trap(drakvuf, "NtOpenKeyTransactedEx",  &traps[10], open_key_transacted_ex_cb);
     register_trap(drakvuf, "NtQueryKey",             &traps[11], query_key_cb);
-    register_trap(drakvuf, "NtQueryMultipleValueKey",&traps[12], query_multiple_value_key_cb);
+    register_trap(drakvuf, "NtQueryMultipleValueKey", &traps[12], query_multiple_value_key_cb);
     register_trap(drakvuf, "NtQueryValueKey",        &traps[13], query_value_key_cb);
 }
 

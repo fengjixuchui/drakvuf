@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2017 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -142,6 +142,15 @@ extern bool verbose;
 
 #define UNUSED(x) (void)(x)
 
+/*
+ * How often should the VMI caches be flushed?
+ *
+ * TODO: develop intelligent cache-flush system that
+ *       catches the events that actually make flushes
+ *       necessary.
+ */
+#define VMI_FLUSH_RATE 100
+
 struct fd_info
 {
     int fd;
@@ -158,6 +167,8 @@ struct drakvuf
     char* rekall_profile;
     json_object* rekall_profile_json;
     os_t os;
+    char* rekall_wow_profile;
+    json_object* rekall_wow_profile_json;
 
     xen_interface_t* xen;
     os_interface_t osi;
@@ -166,6 +177,7 @@ struct drakvuf
     xen_pfn_t zero_page_gfn;
 
     // VMI
+    unsigned long flush_counter;
     GMutex vmi_lock;
     vmi_instance_t vmi;
 
@@ -179,6 +191,8 @@ struct drakvuf
 
     size_t* offsets;
     size_t* sizes;
+
+    size_t* wow_offsets;
 
     // Processing trap removals in trap callbacks
     // is problematic so we save all such requests
@@ -196,9 +210,6 @@ struct drakvuf
     addr_t kdtb;
 
     int address_width;
-
-    x86_registers_t* regs[16]; // vCPU specific registers recorded during the last event
-    addr_t kpcr[16]; // vCPU specific kpcr recorded on mov-to-cr3
 
     GHashTable* remapped_gfns; // Key: gfn
     // val: remapped gfn
@@ -262,12 +273,21 @@ struct remapped_gfn
     bool active;
 };
 
+typedef struct process_data_priv
+{
+    char* name;   /* Process name */
+    vmi_pid_t pid ;     /* Process pid */
+    vmi_pid_t ppid ;    /* Process parent pid */
+    addr_t base_addr ;  /* Process base address */
+    int64_t userid ;    /* Process SessionID/UID */
+} proc_data_priv_t ;
+
 struct memcb_pass
 {
     drakvuf_t drakvuf;
     uint64_t gfn;
     addr_t pa;
-    proc_data_t proc_data ;
+    proc_data_priv_t proc_data ;
     struct remapped_gfn* remapped_gfn;
     vmi_mem_access_t access;
     GSList* traps;
@@ -275,11 +295,31 @@ struct memcb_pass
 
 void drakvuf_force_resume (drakvuf_t drakvuf);
 
+bool drakvuf_get_current_process_data(drakvuf_t drakvuf,
+                                      drakvuf_trap_info_t* info,
+                                      proc_data_priv_t* proc_data);
+
+bool drakvuf_get_process_data_priv(drakvuf_t drakvuf,
+                                   addr_t process_base,
+                                   proc_data_priv_t* proc_data);
+
 char* drakvuf_get_current_process_name(drakvuf_t drakvuf,
-                                       uint64_t vcpu_id,
+                                       drakvuf_trap_info_t* info,
                                        bool fullpath);
 
 int64_t drakvuf_get_current_process_userid(drakvuf_t drakvuf,
-        uint64_t vcpu_id);
+        drakvuf_trap_info_t* info);
+
+bool inject_trap_breakpoint(drakvuf_t drakvuf, drakvuf_trap_t* trap);
+bool inject_trap_reg(drakvuf_t drakvuf, drakvuf_trap_t* trap);
+bool inject_trap_debug(drakvuf_t drakvuf, drakvuf_trap_t* trap);
+bool inject_trap_cpuid(drakvuf_t drakvuf, drakvuf_trap_t* trap);
+
+event_response_t post_mem_cb(vmi_instance_t vmi, vmi_event_t* event);
+event_response_t pre_mem_cb(vmi_instance_t vmi, vmi_event_t* event);
+event_response_t int3_cb(vmi_instance_t vmi, vmi_event_t* event);
+event_response_t cr3_cb(vmi_instance_t vmi, vmi_event_t* event);
+event_response_t debug_cb(vmi_instance_t vmi, vmi_event_t* event);
+event_response_t cpuid_cb(vmi_instance_t vmi, vmi_event_t* event);
 
 #endif

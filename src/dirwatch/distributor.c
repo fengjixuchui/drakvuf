@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2017 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -127,9 +127,13 @@ static const char* queue_folder;
 
 int main(int argc, char** argv)
 {
-    DIR* indir, *qdir;
-    struct dirent* inent, *qdent;
-    uint64_t processed = 0, total_processed = 0, jobs = 0;
+    DIR* indir;
+    DIR* qdir;
+    struct dirent* inent;
+    struct dirent* qdent;
+    uint64_t processed = 0;
+    uint64_t total_processed = 0;
+    uint64_t jobs = 0;
     int ret = 0;
     uint64_t limit = 0;
 
@@ -181,12 +185,13 @@ int main(int argc, char** argv)
                             continue;
 
                         gchar** qinfo = g_strsplit(qdent->d_name, "_", 2);
-                        int qsize = atoi(qinfo[1]), count = -1;
+                        int qsize = atoi(qinfo[1]);
+                        int count = -1;
                         DIR* q;
                         struct dirent* qent;
 
-                        char* folder = g_malloc0(snprintf(NULL, 0, "%s/%s", queue_folder, qdent->d_name) + 1);
-                        sprintf(folder, "%s/%s", queue_folder, qdent->d_name);
+                        char* folder;
+                        folder = g_strdup_printf("%s/%s", queue_folder, qdent->d_name);
 
                         if ((q = opendir (folder)) != NULL)
                         {
@@ -201,8 +206,8 @@ int main(int argc, char** argv)
 
                         if ( count >= 0 && qsize >= 0 && qsize > count )
                         {
-                            char* command = g_malloc0(snprintf(NULL, 0, "mv %s/%s %s/%s/%s", in_folder, inent->d_name, queue_folder, qdent->d_name, inent->d_name) + 1);
-                            sprintf(command, "mv %s/%s %s/%s/%s", in_folder, inent->d_name, queue_folder, qdent->d_name, inent->d_name);
+                            char* command;
+                            command = g_strdup_printf("mv %s/%s %s/%s/%s", in_folder, inent->d_name, queue_folder, qdent->d_name, inent->d_name);
                             printf("** MOVING FILE FOR PROCESSING: %s\n", command);
                             g_spawn_command_line_sync(command, NULL, NULL, NULL, NULL);
                             g_free(command);
@@ -258,14 +263,12 @@ int main(int argc, char** argv)
                     }
                     break;
                 }
-            }
-            while (!ret);
+            } while (!ret);
         }
         else if ( processed != jobs )
             sleep(1);
 
-    }
-    while (!ret);
+    } while (!ret);
 
     inotify_rm_watch( fd, wd );
     close(fd);

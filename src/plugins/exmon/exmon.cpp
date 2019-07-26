@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2017 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -137,42 +137,55 @@ enum offset
 
 static const char* offset_names[__OFFSET_MAX][2] =
 {
-    [KTRAP_FRAME_EIP] = {"_KTRAP_FRAME","Eip"},
-    [KTRAP_FRAME_EAX] = {"_KTRAP_FRAME","Eax"},
-    [KTRAP_FRAME_EBX] = {"_KTRAP_FRAME","Ebx"},
-    [KTRAP_FRAME_ECX] = {"_KTRAP_FRAME","Ecx"},
-    [KTRAP_FRAME_EDX] = {"_KTRAP_FRAME","Edx"},
-    [KTRAP_FRAME_EDI] = {"_KTRAP_FRAME","Edi"},
-    [KTRAP_FRAME_ESI] = {"_KTRAP_FRAME","Esi"},
-    [KTRAP_FRAME_EBP] = {"_KTRAP_FRAME","Ebp"},
-    [KTRAP_FRAME_HWESP] = {"_KTRAP_FRAME","HardwareEsp"},
-    [KTRAP_FRAME_RIP] = {"_KTRAP_FRAME","Rip"},
-    [KTRAP_FRAME_RAX] = {"_KTRAP_FRAME","Rax"},
-    [KTRAP_FRAME_RBX] = {"_KTRAP_FRAME","Rbx"},
-    [KTRAP_FRAME_RCX] = {"_KTRAP_FRAME","Rcx"},
-    [KTRAP_FRAME_RDX] = {"_KTRAP_FRAME","Rdx"},
-    [KTRAP_FRAME_RSP] = {"_KTRAP_FRAME","Rsp"},
-    [KTRAP_FRAME_RBP] = {"_KTRAP_FRAME","Rbp"},
-    [KTRAP_FRAME_RSI] = {"_KTRAP_FRAME","Rsi"},
-    [KTRAP_FRAME_RDI] = {"_KTRAP_FRAME","Rdi"},
-    [KTRAP_FRAME_R8] = {"_KTRAP_FRAME","R8"},
-    [KTRAP_FRAME_R9] = {"_KTRAP_FRAME","R9"},
-    [KTRAP_FRAME_R10] = {"_KTRAP_FRAME","R10"},
-    [KTRAP_FRAME_R11] = {"_KTRAP_FRAME","R11"},
+    [KTRAP_FRAME_EIP] = {"_KTRAP_FRAME", "Eip"},
+    [KTRAP_FRAME_EAX] = {"_KTRAP_FRAME", "Eax"},
+    [KTRAP_FRAME_EBX] = {"_KTRAP_FRAME", "Ebx"},
+    [KTRAP_FRAME_ECX] = {"_KTRAP_FRAME", "Ecx"},
+    [KTRAP_FRAME_EDX] = {"_KTRAP_FRAME", "Edx"},
+    [KTRAP_FRAME_EDI] = {"_KTRAP_FRAME", "Edi"},
+    [KTRAP_FRAME_ESI] = {"_KTRAP_FRAME", "Esi"},
+    [KTRAP_FRAME_EBP] = {"_KTRAP_FRAME", "Ebp"},
+    [KTRAP_FRAME_HWESP] = {"_KTRAP_FRAME", "HardwareEsp"},
+    [KTRAP_FRAME_RIP] = {"_KTRAP_FRAME", "Rip"},
+    [KTRAP_FRAME_RAX] = {"_KTRAP_FRAME", "Rax"},
+    [KTRAP_FRAME_RBX] = {"_KTRAP_FRAME", "Rbx"},
+    [KTRAP_FRAME_RCX] = {"_KTRAP_FRAME", "Rcx"},
+    [KTRAP_FRAME_RDX] = {"_KTRAP_FRAME", "Rdx"},
+    [KTRAP_FRAME_RSP] = {"_KTRAP_FRAME", "Rsp"},
+    [KTRAP_FRAME_RBP] = {"_KTRAP_FRAME", "Rbp"},
+    [KTRAP_FRAME_RSI] = {"_KTRAP_FRAME", "Rsi"},
+    [KTRAP_FRAME_RDI] = {"_KTRAP_FRAME", "Rdi"},
+    [KTRAP_FRAME_R8] = {"_KTRAP_FRAME", "R8"},
+    [KTRAP_FRAME_R9] = {"_KTRAP_FRAME", "R9"},
+    [KTRAP_FRAME_R10] = {"_KTRAP_FRAME", "R10"},
+    [KTRAP_FRAME_R11] = {"_KTRAP_FRAME", "R11"},
 };
 
 static void print_program_info(uint8_t previous_mode, char const* user_format, drakvuf_trap_info_t* info)
 {
+    exmon* e = (exmon*)info->trap->data;
     if (previous_mode == 1)
     {
         if (info->proc_data.base_addr)
         {
-            printf(user_format, info->proc_data.pid, info->proc_data.ppid, info->proc_data.name);
+            const char* escaped_pname = info->proc_data.name;
+            if (e->format == OUTPUT_JSON)
+            {
+                escaped_pname = (const char*)drakvuf_escape_str (info->proc_data.name);
+            }
+            printf(user_format, info->proc_data.pid, info->proc_data.ppid, escaped_pname);
+            if (e->format == OUTPUT_JSON)
+            {
+                g_free ((void*) escaped_pname);
+            }
         }
         else printf(user_format, 0, 0, "NOPROC");
     }
     else
     {
+        if (e->format == OUTPUT_JSON)
+            printf("}");
+
         printf("\n");
     }
 }
@@ -199,8 +212,11 @@ static event_response_t cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 
     if (e->pm != VMI_PM_IA32E)
     {
-        reg_t exception_record, ptrap_frame, exception_code;
+        reg_t exception_record;
+        reg_t ptrap_frame;
+        reg_t exception_code;
         uint8_t previous_mode;
+        uint32_t eip, eax, ebx, ecx, edx, edi, esi, ebp, hwesp;
 
         ctx.addr = info->regs->rsp+4;
         if ( VMI_FAILURE == vmi_read_32(vmi, &ctx, (uint32_t*)&exception_record) )
@@ -226,6 +242,16 @@ static event_response_t cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
         if ( VMI_FAILURE == vmi_read_32(vmi, &ctx, (uint32_t*)&exception_code) )
             goto done;
 
+        memcpy(&eip, trap_frame+e->offsets[KTRAP_FRAME_EIP], sizeof(uint32_t));
+        memcpy(&eax, trap_frame+e->offsets[KTRAP_FRAME_EAX], sizeof(uint32_t));
+        memcpy(&ebx, trap_frame+e->offsets[KTRAP_FRAME_EBX], sizeof(uint32_t));
+        memcpy(&ecx, trap_frame+e->offsets[KTRAP_FRAME_ECX], sizeof(uint32_t));
+        memcpy(&edx, trap_frame+e->offsets[KTRAP_FRAME_EDX], sizeof(uint32_t));
+        memcpy(&edi, trap_frame+e->offsets[KTRAP_FRAME_EDI], sizeof(uint32_t));
+        memcpy(&esi, trap_frame+e->offsets[KTRAP_FRAME_ESI], sizeof(uint32_t));
+        memcpy(&ebp, trap_frame+e->offsets[KTRAP_FRAME_EBP], sizeof(uint32_t));
+        memcpy(&hwesp, trap_frame+e->offsets[KTRAP_FRAME_HWESP], sizeof(uint32_t));
+
         switch (e->format)
         {
             case OUTPUT_CSV:
@@ -235,6 +261,10 @@ static event_response_t cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
             case OUTPUT_KV:
                 str_format=KV_FORMAT32;
                 user_format=KV_FORMAT_USER;
+                break;
+            case OUTPUT_JSON:
+                str_format=JSON_FORMAT32;
+                user_format=JSON_FORMAT_USER;
                 break;
             default:
             case OUTPUT_DEFAULT:
@@ -249,24 +279,17 @@ static event_response_t cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
                (uint32_t)exception_record,
                (uint32_t)exception_code,
                (uint32_t)first_chance,
-               *(uint32_t*)(trap_frame+e->offsets[KTRAP_FRAME_EIP]),
-               *(uint32_t*)(trap_frame+e->offsets[KTRAP_FRAME_EAX]),
-               *(uint32_t*)(trap_frame+e->offsets[KTRAP_FRAME_EBX]),
-               *(uint32_t*)(trap_frame+e->offsets[KTRAP_FRAME_ECX]),
-               *(uint32_t*)(trap_frame+e->offsets[KTRAP_FRAME_EDX]),
-               *(uint32_t*)(trap_frame+e->offsets[KTRAP_FRAME_EDI]),
-               *(uint32_t*)(trap_frame+e->offsets[KTRAP_FRAME_ESI]),
-               *(uint32_t*)(trap_frame+e->offsets[KTRAP_FRAME_EBP]),
-               *(uint32_t*)(trap_frame+e->offsets[KTRAP_FRAME_HWESP]));
+               eip, eax, ebx, ecx, edx, edi, esi, ebp, hwesp);
 
         print_program_info(previous_mode, user_format, info);
     }
     else
     {
         reg_t exception_code;
+        uint64_t rip, rax, rbx, rcx, rdx, rsp, rbp, rsi, rdi, r8, r9, r10, r11;
 
         ctx.addr = info->regs->r8;
-        if ( VMI_FAILURE == vmi_read(vmi,&ctx, e->ktrap_frame_size, trap_frame, NULL) )
+        if ( VMI_FAILURE == vmi_read(vmi, &ctx, e->ktrap_frame_size, trap_frame, NULL) )
             goto done;
 
         ctx.addr = info->regs->rcx;
@@ -276,6 +299,20 @@ static event_response_t cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
         ctx.addr = info->regs->rsp+40; // Return address + 32 byte shadow space
         if ( VMI_FAILURE == vmi_read_32(vmi, &ctx, (uint32_t*)&first_chance) )
             goto done;
+
+        memcpy(&rip, trap_frame+e->offsets[KTRAP_FRAME_RIP], sizeof(uint64_t));
+        memcpy(&rax, trap_frame+e->offsets[KTRAP_FRAME_RAX], sizeof(uint64_t));
+        memcpy(&rbx, trap_frame+e->offsets[KTRAP_FRAME_RBX], sizeof(uint64_t));
+        memcpy(&rcx, trap_frame+e->offsets[KTRAP_FRAME_RCX], sizeof(uint64_t));
+        memcpy(&rdx, trap_frame+e->offsets[KTRAP_FRAME_RDX], sizeof(uint64_t));
+        memcpy(&rsp, trap_frame+e->offsets[KTRAP_FRAME_RSP], sizeof(uint64_t));
+        memcpy(&rbp, trap_frame+e->offsets[KTRAP_FRAME_RBP], sizeof(uint64_t));
+        memcpy(&rsi, trap_frame+e->offsets[KTRAP_FRAME_RSI], sizeof(uint64_t));
+        memcpy(&rdi, trap_frame+e->offsets[KTRAP_FRAME_RDI], sizeof(uint64_t));
+        memcpy(&r8, trap_frame+e->offsets[KTRAP_FRAME_R8], sizeof(uint64_t));
+        memcpy(&r9, trap_frame+e->offsets[KTRAP_FRAME_R9], sizeof(uint64_t));
+        memcpy(&r10, trap_frame+e->offsets[KTRAP_FRAME_R10], sizeof(uint64_t));
+        memcpy(&r11, trap_frame+e->offsets[KTRAP_FRAME_R11], sizeof(uint64_t));
 
         switch (e->format)
         {
@@ -287,28 +324,21 @@ static event_response_t cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
                 str_format=KV_FORMAT64;
                 user_format=KV_FORMAT_USER;
                 break;
+            case OUTPUT_JSON:
+                str_format=JSON_FORMAT64;
+                user_format=JSON_FORMAT_USER;
+                break;
             default:
             case OUTPUT_DEFAULT:
                 str_format=DEFAULT_FORMAT64;
                 user_format=DEFAULT_FORMAT_USER;
                 break;
         }
+
         printf(str_format,
                UNPACK_TIMEVAL(info->timestamp),
                info->regs->rcx, exception_code, first_chance & 1,
-               *(uint64_t*)(trap_frame+e->offsets[KTRAP_FRAME_RIP]),
-               *(uint64_t*)(trap_frame+e->offsets[KTRAP_FRAME_RAX]),
-               *(uint64_t*)(trap_frame+e->offsets[KTRAP_FRAME_RBX]),
-               *(uint64_t*)(trap_frame+e->offsets[KTRAP_FRAME_RCX]),
-               *(uint64_t*)(trap_frame+e->offsets[KTRAP_FRAME_RDX]),
-               *(uint64_t*)(trap_frame+e->offsets[KTRAP_FRAME_RSP]),
-               *(uint64_t*)(trap_frame+e->offsets[KTRAP_FRAME_RBP]),
-               *(uint64_t*)(trap_frame+e->offsets[KTRAP_FRAME_RSI]),
-               *(uint64_t*)(trap_frame+e->offsets[KTRAP_FRAME_RDI]),
-               *(uint64_t*)(trap_frame+e->offsets[KTRAP_FRAME_R8]),
-               *(uint64_t*)(trap_frame+e->offsets[KTRAP_FRAME_R9]),
-               *(uint64_t*)(trap_frame+e->offsets[KTRAP_FRAME_R10]),
-               *(uint64_t*)(trap_frame+e->offsets[KTRAP_FRAME_R11]));
+               rip, rax, rbx, rcx, rdx, rsp, rbp, rsi, rdi, r8, r9, r10, r11);
 
         print_program_info((uint8_t)(info->regs->r9), user_format, info);
     }
@@ -319,13 +349,13 @@ done:
     return 0;
 }
 
-exmon::exmon(drakvuf_t drakvuf, const void* config, output_format_t output)
+exmon::exmon(drakvuf_t drakvuf, output_format_t output)
+    : format{output}
 {
     if ( !drakvuf_get_function_rva(drakvuf, "KiDispatchException", &this->trap.breakpoint.rva) )
         throw -1;
 
     this->trap.cb = cb;
-    this->format = output;
     this->offsets = (addr_t*)g_malloc0(__OFFSET_MAX*sizeof(addr_t));
     this->ktrap_frame_size = 0;
 
@@ -341,7 +371,7 @@ exmon::exmon(drakvuf_t drakvuf, const void* config, output_format_t output)
         throw -1;
     }
 
-    if ( !drakvuf_add_trap(drakvuf,&this->trap) )
+    if ( !drakvuf_add_trap(drakvuf, &this->trap) )
     {
         g_free(this->offsets);
         throw -1;

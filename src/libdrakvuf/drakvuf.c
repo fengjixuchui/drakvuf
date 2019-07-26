@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2017 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -103,6 +103,7 @@
  ***************************************************************************/
 
 #include <glib.h>
+#include <json-c/json.h>
 #include "../xen_helper/xen_helper.h"
 
 #include "libdrakvuf.h"
@@ -119,9 +120,7 @@ void drakvuf_close(drakvuf_t drakvuf, const bool pause)
         return;
 
     if (drakvuf->vmi)
-    {
         close_vmi(drakvuf);
-    }
 
     g_free(drakvuf->event_fds);
     g_free(drakvuf->fd_info_lookup);
@@ -135,7 +134,6 @@ void drakvuf_close(drakvuf_t drakvuf, const bool pause)
 
     if (drakvuf->xen)
     {
-
         if ( !pause )
             drakvuf_force_resume(drakvuf);
 
@@ -148,15 +146,22 @@ void drakvuf_close(drakvuf_t drakvuf, const bool pause)
         drakvuf->rekall_profile_json = NULL;
     }
 
+    if (drakvuf->rekall_wow_profile_json)
+    {
+        json_object_put(drakvuf->rekall_wow_profile_json);
+        drakvuf->rekall_wow_profile_json = NULL;
+    }
+
     g_free(drakvuf->offsets);
     g_free(drakvuf->sizes);
     g_mutex_clear(&drakvuf->vmi_lock);
     g_free(drakvuf->dom_name);
     g_free(drakvuf->rekall_profile);
+    g_free(drakvuf->rekall_wow_profile);
     g_free(drakvuf);
 }
 
-bool drakvuf_init(drakvuf_t* drakvuf, const char* domain, const char* rekall_profile, bool _verbose, bool libvmi_conf)
+bool drakvuf_init(drakvuf_t* drakvuf, const char* domain, const char* rekall_profile, const char* rekall_wow_profile, bool _verbose, bool libvmi_conf)
 {
 
     if ( !domain || !rekall_profile )
@@ -166,11 +171,22 @@ bool drakvuf_init(drakvuf_t* drakvuf, const char* domain, const char* rekall_pro
     verbose = _verbose;
 #endif
 
-    *drakvuf = g_malloc0(sizeof(struct drakvuf));
+    *drakvuf = (drakvuf_t)g_malloc0(sizeof(struct drakvuf));
 
     (*drakvuf)->rekall_profile_json = json_object_from_file(rekall_profile);
     (*drakvuf)->rekall_profile = g_strdup(rekall_profile);
     (*drakvuf)->os = rekall_get_os_type((*drakvuf)->rekall_profile_json);
+
+    if ( (*drakvuf)->os == VMI_OS_WINDOWS )
+    {
+        if ( rekall_wow_profile )
+        {
+            (*drakvuf)->rekall_wow_profile_json = json_object_from_file(rekall_wow_profile);
+            (*drakvuf)->rekall_wow_profile      = g_strdup(rekall_wow_profile);
+        }
+        else
+            PRINT_DEBUG("drakvuf_init: Rekall WoW64 profile not used\n");
+    }
 
     g_mutex_init(&(*drakvuf)->vmi_lock);
 
@@ -189,10 +205,7 @@ bool drakvuf_init(drakvuf_t* drakvuf, const char* domain, const char* rekall_pro
     drakvuf_pause(*drakvuf);
 
     if (!init_vmi(*drakvuf, libvmi_conf))
-    {
-        drakvuf_resume(*drakvuf);
         goto err;
-    }
 
     switch ((*drakvuf)->os)
     {
@@ -204,10 +217,12 @@ bool drakvuf_init(drakvuf_t* drakvuf, const char* domain, const char* rekall_pro
             if ( !set_os_linux(*drakvuf) )
                 goto err;
             break;
+        case VMI_OS_UNKNOWN: /* fall-through */
+        case VMI_OS_FREEBSD: /* fall-through */
         default:
             fprintf(stderr, "The Rekall profile describes an unknown operating system kernel!\n");
             goto err;
-    };
+    }
 
     PRINT_DEBUG("libdrakvuf initialized\n");
 
@@ -225,6 +240,11 @@ err:
 void drakvuf_interrupt(drakvuf_t drakvuf, int sig)
 {
     drakvuf->interrupted = sig;
+}
+
+int drakvuf_is_interrupted(drakvuf_t drakvuf)
+{
+    return drakvuf->interrupted;
 }
 
 bool inject_trap_breakpoint(drakvuf_t drakvuf, drakvuf_trap_t* trap)
@@ -266,11 +286,8 @@ bool inject_trap_breakpoint(drakvuf_t drakvuf, drakvuf_trap_t* trap)
                 if ( !drakvuf_find_process(drakvuf, pid, name, &process_base) )
                     return 0;
 
-                if (pid == -1)
-                {
-                    if ( drakvuf_get_process_pid(drakvuf, process_base, &pid) == VMI_FAILURE )
-                        return 0;
-                }
+                if ( pid == -1 && !drakvuf_get_process_pid(drakvuf, process_base, &pid) )
+                    return 0;
 
                 if ( !drakvuf_get_module_list(drakvuf, process_base, &module_list) )
                     return 0;
@@ -281,7 +298,8 @@ bool inject_trap_breakpoint(drakvuf_t drakvuf, drakvuf_trap_t* trap)
 
         if (trap->breakpoint.addr_type == ADDR_VA)
         {
-            addr_t dtb, trap_pa;
+            addr_t dtb;
+            addr_t trap_pa;
             if ( VMI_FAILURE == vmi_pid_to_dtb(drakvuf->vmi, trap->breakpoint.pid, &dtb) )
             {
                 PRINT_DEBUG("No DTB found for pid %i\n", trap->breakpoint.pid);
@@ -327,6 +345,9 @@ bool inject_trap_reg(drakvuf_t drakvuf, drakvuf_trap_t* trap)
 {
     if (CR3 == trap->reg)
     {
+        if ( !drakvuf->cr3 && !control_cr3_trap(drakvuf, 1) )
+            return 0;
+
         drakvuf->cr3 = g_slist_prepend(drakvuf->cr3, trap);
         return 1;
     }
@@ -387,6 +408,7 @@ bool drakvuf_add_trap(drakvuf_t drakvuf, drakvuf_trap_t* trap)
         case CPUID:
             ret = inject_trap_cpuid(drakvuf, trap);
             break;
+        case __INVALID_TRAP_TYPE: /* fall-through */
         default:
             ret = 0;
             break;
@@ -401,12 +423,11 @@ void drakvuf_remove_trap(drakvuf_t drakvuf, drakvuf_trap_t* trap,
 {
     if ( drakvuf->in_callback)
     {
-        struct free_trap_wrapper* free_wrapper =
-            g_hash_table_lookup(drakvuf->remove_traps, &trap);
+        struct free_trap_wrapper* free_wrapper = (struct free_trap_wrapper*)g_hash_table_lookup(drakvuf->remove_traps, &trap);
 
         if (!free_wrapper)
         {
-            free_wrapper = g_malloc0(sizeof(struct free_trap_wrapper));
+            free_wrapper = (struct free_trap_wrapper*)g_malloc0(sizeof(struct free_trap_wrapper));
             free_wrapper->free_routine = free_routine;
             free_wrapper->trap = trap;
             g_hash_table_insert(drakvuf->remove_traps,
@@ -551,7 +572,37 @@ int drakvuf_get_address_width(drakvuf_t drakvuf)
     return drakvuf->address_width;
 }
 
-static unicode_string_t* drakvuf_read_unicode_common(vmi_instance_t vmi, const access_context_t* ctx)
+bool drakvuf_get_current_process_data(drakvuf_t drakvuf, drakvuf_trap_info_t* info, proc_data_priv_t* proc_data)
+{
+    addr_t process_base = drakvuf_get_current_process(drakvuf, info);
+    return drakvuf_get_process_data_priv(drakvuf, process_base, proc_data);
+}
+
+bool drakvuf_get_process_data(drakvuf_t drakvuf, addr_t process_base, proc_data_t* proc_data)
+{
+    proc_data_priv_t proc_data_priv = { 0 };
+    bool success = drakvuf_get_process_data_priv(drakvuf, process_base, &proc_data_priv);
+    proc_data->name = proc_data_priv.name;
+    proc_data->pid = proc_data_priv.pid;
+    proc_data->ppid = proc_data_priv.ppid;
+    proc_data->base_addr = proc_data_priv.base_addr;
+    proc_data->userid = proc_data_priv.userid;
+    return success;
+}
+
+char* drakvuf_read_ascii_str(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t addr)
+{
+    access_context_t ctx =
+    {
+        .translate_mechanism = VMI_TM_PROCESS_DTB,
+        .dtb = info->regs->cr3,
+        .addr = addr,
+    };
+
+    return vmi_read_str(drakvuf->vmi, &ctx);
+}
+
+unicode_string_t* drakvuf_read_unicode_common(vmi_instance_t vmi, const access_context_t* ctx)
 {
     unicode_string_t* us = vmi_read_unicode_str(vmi, ctx);
     if ( !us )
@@ -601,6 +652,58 @@ unicode_string_t* drakvuf_read_unicode_va(vmi_instance_t vmi, addr_t vaddr, vmi_
     };
 
     return drakvuf_read_unicode_common(vmi, &ctx);
+}
+
+unicode_string_t* drakvuf_read_unicode32_common(vmi_instance_t vmi, const access_context_t* ctx)
+{
+    unicode_string_t* us = vmi_read_unicode_str_pm( vmi, ctx, VMI_PM_LEGACY );
+    if ( !us )
+        return NULL;
+
+    unicode_string_t* out = (unicode_string_t*)g_malloc0(sizeof(unicode_string_t));
+
+    if ( !out )
+    {
+        vmi_free_unicode_str(us);
+        return NULL;
+    }
+
+    status_t rc = vmi_convert_str_encoding(us, out, "UTF-8");
+    vmi_free_unicode_str(us);
+
+    if (VMI_SUCCESS == rc)
+        return out;
+
+    g_free(out);
+    return NULL;
+}
+
+unicode_string_t* drakvuf_read_unicode32(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t addr)
+{
+    if ( !addr )
+        return NULL;
+
+    vmi_instance_t vmi = drakvuf->vmi;
+    access_context_t ctx =
+    {
+        .addr = addr,
+        .translate_mechanism = VMI_TM_PROCESS_DTB,
+        .dtb = info->regs->cr3,
+    };
+
+    return drakvuf_read_unicode32_common(vmi, &ctx);
+}
+
+unicode_string_t* drakvuf_read_unicode32_va(vmi_instance_t vmi, addr_t vaddr, vmi_pid_t pid)
+{
+    access_context_t ctx =
+    {
+        .translate_mechanism = VMI_TM_PROCESS_PID,
+        .addr = vaddr,
+        .pid = pid
+    };
+
+    return drakvuf_read_unicode32_common(vmi, &ctx);
 }
 
 size_t drakvuf_wchar_string_length(vmi_instance_t vmi, const access_context_t* ctx)
@@ -671,6 +774,44 @@ unicode_string_t* drakvuf_read_wchar_string(vmi_instance_t vmi, const access_con
 {
     size_t strlen = drakvuf_wchar_string_length(vmi, ctx);
     return drakvuf_read_wchar_array(vmi, ctx, strlen);
+}
+
+// Returns JSON-compliant copy of input string
+gchar* drakvuf_escape_str(const char* input)
+{
+    char* result = NULL;
+    struct json_object* obj = NULL;
+
+    if (NULL == input)
+    {
+        // give caller result that can be freed
+        result = g_strdup("\"(null)\"");
+        goto exit;
+    }
+
+    obj = json_object_new_string(input);
+    if (NULL == obj)
+    {
+        fprintf(stderr, "json_object_new_string() failed!\n");
+        goto exit;
+    }
+
+    const char* escaped = json_object_to_json_string(obj);
+    if (NULL == obj)
+    {
+        fprintf(stderr, "json_object_to_json_string() failed!\n");
+        goto exit;
+    }
+
+    result = g_strdup(escaped);
+    if (NULL == result)
+    {
+        fprintf(stderr, "g_strdup() failed!\n");
+    }
+
+exit:
+    json_object_put(obj); // passing NULL is OK
+    return result;
 }
 
 static void drakvuf_event_fd_generate(drakvuf_t drakvuf)

@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
 *                                                                         *
-* DRAKVUF (C) 2014-2017 Tamas K Lengyel.                                  *
+* DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
 * Tamas K Lengyel is hereinafter referred to as the author.               *
 * This program is free software; you may redistribute and/or modify it    *
 * under the terms of the GNU General Public License as published by the   *
@@ -109,6 +109,7 @@
 #include <cassert>
 
 #include "../plugins.h"
+#include "../plugin_utils.h"
 #include "filedelete.h"
 #include "private.h"
 
@@ -135,72 +136,38 @@ const char* offset_names[__OFFSET_MAX][2] =
     [OBJECT_HEADER_BODY] = { "_OBJECT_HEADER", "Body" },
 };
 
-static std::string fo_flag_to_string(std::string flag, output_format_t format)
+static const flags_str_t fo_flags_map =
 {
-    switch (format)
-    {
-        case OUTPUT_KV:
-            return flag + "=true,";
-        default:
-            return flag + " | ";
-    }
-}
-
-static std::string fo_flags_to_string(uint64_t fo_flags, output_format_t format = OUTPUT_DEFAULT)
-{
-    std::string str("");
-
-#define FLAG_HELPER(FLAG) \
-    if (FLAG & fo_flags) \
-        str += fo_flag_to_string(#FLAG, format)
-
-    FLAG_HELPER(FO_FILE_OPEN);
-    FLAG_HELPER(FO_SYNCHRONOUS_IO);
-    FLAG_HELPER(FO_ALERTABLE_IO);
-    FLAG_HELPER(FO_NO_INTERMEDIATE_BUFFERING);
-    FLAG_HELPER(FO_WRITE_THROUGH);
-    FLAG_HELPER(FO_SEQUENTIAL_ONLY);
-    FLAG_HELPER(FO_CACHE_SUPPORTED);
-    FLAG_HELPER(FO_NAMED_PIPE);
-    FLAG_HELPER(FO_STREAM_FILE);
-    FLAG_HELPER(FO_MAILSLOT);
-    FLAG_HELPER(FO_GENERATE_AUDIT_ON_CLOSE);
-    FLAG_HELPER(FO_DIRECT_DEVICE_OPEN);
-    FLAG_HELPER(FO_FILE_MODIFIED);
-    FLAG_HELPER(FO_FILE_SIZE_CHANGED);
-    FLAG_HELPER(FO_CLEANUP_COMPLETE);
-    FLAG_HELPER(FO_TEMPORARY_FILE);
-    FLAG_HELPER(FO_DELETE_ON_CLOSE);
-    FLAG_HELPER(FO_OPENED_CASE_SENSITIVE);
-    FLAG_HELPER(FO_HANDLE_CREATED);
-    FLAG_HELPER(FO_FILE_FAST_IO_READ);
-    FLAG_HELPER(FO_RANDOM_ACCESS);
-    FLAG_HELPER(FO_FILE_OPEN_CANCELLED);
-    FLAG_HELPER(FO_VOLUME_OPEN);
-    FLAG_HELPER(FO_REMOTE_ORIGIN);
-    FLAG_HELPER(FO_DISALLOW_EXCLUSIVE);
-    FLAG_HELPER(FO_SKIP_SET_EVENT);
-    FLAG_HELPER(FO_SKIP_SET_FAST_IO);
-    FLAG_HELPER(FO_INDIRECT_WAIT_OBJECT);
-    FLAG_HELPER(FO_SECTION_MINSTORE_TREATMENT);
-
-#undef FLAG_HELPER
-
-    if (!str.empty())
-    {
-        switch (format)
-        {
-            case OUTPUT_KV:
-                str.resize(str.size() - 1);
-                break;
-            default:
-                str.resize(str.size() - 3);
-                break;
-        }
-    }
-
-    return str;
-}
+    REGISTER_FLAG(FO_FILE_OPEN),
+    REGISTER_FLAG(FO_SYNCHRONOUS_IO),
+    REGISTER_FLAG(FO_ALERTABLE_IO),
+    REGISTER_FLAG(FO_NO_INTERMEDIATE_BUFFERING),
+    REGISTER_FLAG(FO_WRITE_THROUGH),
+    REGISTER_FLAG(FO_SEQUENTIAL_ONLY),
+    REGISTER_FLAG(FO_CACHE_SUPPORTED),
+    REGISTER_FLAG(FO_NAMED_PIPE),
+    REGISTER_FLAG(FO_STREAM_FILE),
+    REGISTER_FLAG(FO_MAILSLOT),
+    REGISTER_FLAG(FO_GENERATE_AUDIT_ON_CLOSE),
+    REGISTER_FLAG(FO_DIRECT_DEVICE_OPEN),
+    REGISTER_FLAG(FO_FILE_MODIFIED),
+    REGISTER_FLAG(FO_FILE_SIZE_CHANGED),
+    REGISTER_FLAG(FO_CLEANUP_COMPLETE),
+    REGISTER_FLAG(FO_TEMPORARY_FILE),
+    REGISTER_FLAG(FO_DELETE_ON_CLOSE),
+    REGISTER_FLAG(FO_OPENED_CASE_SENSITIVE),
+    REGISTER_FLAG(FO_HANDLE_CREATED),
+    REGISTER_FLAG(FO_FILE_FAST_IO_READ),
+    REGISTER_FLAG(FO_RANDOM_ACCESS),
+    REGISTER_FLAG(FO_FILE_OPEN_CANCELLED),
+    REGISTER_FLAG(FO_VOLUME_OPEN),
+    REGISTER_FLAG(FO_REMOTE_ORIGIN),
+    REGISTER_FLAG(FO_DISALLOW_EXCLUSIVE),
+    REGISTER_FLAG(FO_SKIP_SET_EVENT),
+    REGISTER_FLAG(FO_SKIP_SET_FAST_IO),
+    REGISTER_FLAG(FO_INDIRECT_WAIT_OBJECT),
+    REGISTER_FLAG(FO_SECTION_MINSTORE_TREATMENT),
+};
 
 static bool get_file_object_flags(drakvuf_t drakvuf, drakvuf_trap_info_t* info, vmi_instance_t vmi, filedelete* f, handle_t handle, uint64_t* flags)
 {
@@ -286,7 +253,7 @@ static void save_file_metadata(filedelete* f,
 
     fprintf(fp, "FileName: \"%s\"\n", filename ?: "<UNKNOWN>");
     fprintf(fp, "FileSize: %zu\n", file_size);
-    fprintf(fp, "FileFlags: 0x%lx (%s)\n", fo_flags, fo_flags_to_string(fo_flags).c_str());
+    fprintf(fp, "FileFlags: 0x%lx (%s)\n", fo_flags, parse_flags(fo_flags, fo_flags_map, OUTPUT_DEFAULT, "0").c_str());
     fprintf(fp, "SequenceNumber: %d\n", sequence_number);
     fprintf(fp, "ControlArea: 0x%lx\n", control_area);
     fprintf(fp, "PID: %" PRIu64 "\n", static_cast<uint64_t>(info->proc_data.pid));
@@ -300,7 +267,11 @@ static void save_file_metadata(filedelete* f,
 
 static void print_filedelete_information(filedelete* f, drakvuf_t drakvuf, drakvuf_trap_info_t* info, const char* filename, size_t bytes_read, uint64_t fo_flags)
 {
-    std::string flags = fo_flags_to_string(fo_flags, f->format);
+    std::string flags = parse_flags(fo_flags, fo_flags_map, f->format);
+
+    gchar* escaped_pname = NULL;
+    gchar* escaped_fname = NULL;
+
     switch (f->format)
     {
         case OUTPUT_CSV:
@@ -313,6 +284,32 @@ static void print_filedelete_information(filedelete* f, drakvuf_t drakvuf, drakv
                    UNPACK_TIMEVAL(info->timestamp), info->proc_data.pid, info->proc_data.ppid, info->proc_data.name,
                    info->trap->name, filename, bytes_read, fo_flags, (flags.empty() ? "" : ","), flags.c_str());
             break;
+        case OUTPUT_JSON:
+            escaped_pname = drakvuf_escape_str(info->proc_data.name);
+            escaped_fname = drakvuf_escape_str(filename);
+            printf( "{"
+                    "\"Plugin\" : \"filedelete\","
+                    "\"TimeStamp\" :" "\"" FORMAT_TIMEVAL "\","
+                    "\"ProcessName\": %s,"
+                    "\"UserName\": \"%s\","
+                    "\"UserId\": %" PRIu64 ","
+                    "\"PID\" : %d,"
+                    "\"PPID\": %d,"
+                    "\"Method\" : \"%s\","
+                    "\"FileName\" : %s,"
+                    "\"Size\" : %ld,"
+                    "\"Flags\" : %" PRIu64 ","
+                    "\"FlagsExpanded\" : \"%s\""
+                    "}\n",
+                    UNPACK_TIMEVAL(info->timestamp),
+                    escaped_pname,
+                    USERIDSTR(drakvuf), info->proc_data.userid,
+                    info->proc_data.pid, info->proc_data.ppid,
+                    info->trap->name, escaped_fname,
+                    bytes_read, fo_flags, flags.c_str());
+            g_free(escaped_fname);
+            g_free(escaped_pname);
+            break;
         default:
         case OUTPUT_DEFAULT:
             printf("[FILEDELETE] TIME:" FORMAT_TIMEVAL " VCPU:%" PRIu32 " CR3:0x%" PRIx64 ",\"%s\" %s:%" PRIi64" \"%s\" SIZE:%" PRIu64 " FO_FLAGS:0x%" PRIx64 "(%s)\n",
@@ -320,11 +317,15 @@ static void print_filedelete_information(filedelete* f, drakvuf_t drakvuf, drakv
                    USERIDSTR(drakvuf), info->proc_data.userid, filename, bytes_read, fo_flags, flags.c_str());
             break;
     }
+
 }
 
 static void print_extraction_information(filedelete* f, drakvuf_t drakvuf, drakvuf_trap_info_t const* info, const char* filename, size_t bytes_read, uint64_t fo_flags, int seq_number)
 {
-    std::string flags = fo_flags_to_string(fo_flags, f->format);
+    gchar* escaped_pname = NULL;
+    gchar* escaped_fname = NULL;
+
+    std::string flags = parse_flags(fo_flags, fo_flags_map, f->format);
     switch (f->format)
     {
         case OUTPUT_CSV:
@@ -336,6 +337,33 @@ static void print_extraction_information(filedelete* f, drakvuf_t drakvuf, drakv
             printf("fileextractor Time=" FORMAT_TIMEVAL ",PID=%d,PPID=%d,ProcessName=\"%s\",Method=%s,FileName=\"%s\",Size=%ld,Flags=0x%" PRIx64 "%s%s,SN=%d\n",
                    UNPACK_TIMEVAL(info->timestamp), info->proc_data.pid, info->proc_data.ppid, info->proc_data.name,
                    info->trap->name, filename, bytes_read, fo_flags, (flags.empty() ? "" : ","), flags.c_str(), seq_number);
+            break;
+        case OUTPUT_JSON:
+            escaped_pname = drakvuf_escape_str(info->proc_data.name);
+            escaped_fname = drakvuf_escape_str(filename);
+            printf( "{"
+                    "\"Plugin\" : \"fileextractor\","
+                    "\"TimeStamp\" :" "\"" FORMAT_TIMEVAL "\","
+                    "\"ProcessName\": %s,"
+                    "\"UserName\": \"%s\","
+                    "\"UserId\": %" PRIu64 ","
+                    "\"PID\" : %d,"
+                    "\"PPID\": %d,"
+                    "\"Method\" : \"%s\","
+                    "\"FileName\" : %s,"
+                    "\"Size\" : %ld,"
+                    "\"Flags\" : %" PRIu64 ","
+                    "\"FlagsExpanded\" : \"%s\""
+                    "\"SeqNum\" : %d"
+                    "}\n",
+                    UNPACK_TIMEVAL(info->timestamp),
+                    escaped_pname,
+                    USERIDSTR(drakvuf), info->proc_data.userid,
+                    info->proc_data.pid, info->proc_data.ppid,
+                    info->trap->name, escaped_fname,
+                    bytes_read, fo_flags, flags.c_str(), seq_number);
+            g_free(escaped_fname);
+            g_free(escaped_pname);
             break;
         default:
         case OUTPUT_DEFAULT:
@@ -356,7 +384,9 @@ static void extract_ca_file(filedelete* f,
                             uint64_t fo_flags)
 {
     addr_t subsection = control_area + f->control_area_size;
-    addr_t segment = 0, test = 0, test2 = 0;
+    addr_t segment = 0;
+    addr_t test = 0;
+    addr_t test2 = 0;
     size_t filesize = 0;
 
     /* Check whether subsection points back to the control area */
@@ -397,7 +427,8 @@ static void extract_ca_file(filedelete* f,
         if ( VMI_FAILURE == vmi_read_addr(vmi, ctx, &test) || test != control_area )
             break;
 
-        addr_t base = 0, start = 0;
+        addr_t base = 0;
+        addr_t start = 0;
         uint32_t ptes = 0;
 
         ctx->addr = subsection + f->offsets[SUBSECTION_SUBSECTIONBASE];
@@ -432,7 +463,7 @@ static void extract_ca_file(filedelete* f,
             {
                 uint8_t page[4096];
 
-                if ( VMI_FAILURE == vmi_read_pa(vmi, VMI_BIT_MASK(12,48) & pte, 4096, &page, NULL) )
+                if ( VMI_FAILURE == vmi_read_pa(vmi, VMI_BIT_MASK(12, 48) & pte, 4096, &page, NULL) )
                     continue;
 
                 if ( !fseek ( fp, fileoffset, SEEK_SET ) )
@@ -464,7 +495,9 @@ static void extract_file(filedelete* f,
                          uint64_t fo_flags)
 {
     addr_t sop = 0;
-    addr_t datasection = 0, sharedcachemap = 0, imagesection = 0;
+    addr_t datasection = 0;
+    addr_t sharedcachemap = 0;
+    addr_t imagesection = 0;
 
     ctx->addr = file_pa + f->offsets[FILE_OBJECT_SECTIONOBJECTPOINTER];
     if ( VMI_FAILURE == vmi_read_addr(vmi, ctx, &sop) )
@@ -573,7 +606,7 @@ event_response_t readfile_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
         return 0;
 
     uint32_t thread_id = 0;
-    if (!drakvuf_get_current_thread_id(drakvuf, info->vcpu, &thread_id))
+    if (!drakvuf_get_current_thread_id(drakvuf, info, &thread_id))
         return 0;
 
     if (thread_id != injector->target_thread_id)
@@ -693,8 +726,8 @@ event_response_t exallocatepool_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
     if (info->regs->cr3 != injector->target_cr3)
         goto done;
 
-    if ( !drakvuf_get_current_thread_id(drakvuf, info->vcpu, &thread_id) ||
-            !injector->target_thread_id || thread_id != injector->target_thread_id )
+    if ( !drakvuf_get_current_thread_id(drakvuf, info, &thread_id) ||
+         !injector->target_thread_id || thread_id != injector->target_thread_id )
         goto done;
 
     if (info->regs->rax)
@@ -735,8 +768,8 @@ event_response_t queryobject_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
     if (info->regs->cr3 != injector->target_cr3)
         return 0;
 
-    if ( !drakvuf_get_current_thread_id(drakvuf, info->vcpu, &thread_id) ||
-            !injector->target_thread_id || thread_id != injector->target_thread_id )
+    if ( !drakvuf_get_current_thread_id(drakvuf, info, &thread_id) ||
+         !injector->target_thread_id || thread_id != injector->target_thread_id )
         return 0;
 
     vmi_instance_t vmi = drakvuf_lock_and_get_vmi(drakvuf);
@@ -821,8 +854,8 @@ static bool start_readfile(drakvuf_t drakvuf, drakvuf_trap_info_t* info, vmi_ins
     }
 
     uint32_t target_thread_id = 0;
-    if ( !drakvuf_get_current_thread_id(drakvuf, info->vcpu, &target_thread_id) ||
-            !target_thread_id )
+    if ( !drakvuf_get_current_thread_id(drakvuf, info, &target_thread_id) ||
+         !target_thread_id )
     {
         PRINT_DEBUG("[FILEDELETE2] Failed to get Thread ID\n");
         return 0;
@@ -1049,10 +1082,9 @@ static addr_t get_function_va(drakvuf_t drakvuf, const char* lib, const char* fu
     return va;
 }
 
-filedelete::filedelete(drakvuf_t drakvuf, const void* config, output_format_t output)
+filedelete::filedelete(drakvuf_t drakvuf, const filedelete_config* c, output_format_t output)
     : sequence_number()
 {
-    const struct filedelete_config* c = (const struct filedelete_config*)config;
     this->pm = drakvuf_get_page_mode(drakvuf);
 
     vmi_instance_t vmi = drakvuf_lock_and_get_vmi(drakvuf);

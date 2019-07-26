@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2016 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -144,6 +144,7 @@ bool inject_traps_modules(drakvuf_t drakvuf,
 void remove_trap(drakvuf_t drakvuf,
                  const drakvuf_trap_t* trap);
 
+bool control_cr3_trap(drakvuf_t drakvuf, bool toggle);
 bool control_debug_trap(drakvuf_t drakvuf, bool toggle);
 bool control_cpuid_trap(drakvuf_t drakvuf, bool toggle);
 

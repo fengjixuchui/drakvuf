@@ -1,6 +1,6 @@
 #********************IMPORTANT DRAKVUF LICENSE TERMS**********************#
 #                                                                         #
-# DRAKVUF (C) 2014-2016 Tamas K Lengyel.                                  #
+# DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  #
 # Tamas K Lengyel is hereinafter referred to as the author.               #
 # This program is free software; you may redistribute and/or modify it    #
 # under the terms of the GNU General Public License as published by the   #
@@ -105,13 +105,22 @@
 h_sources = libinjector.h private.h
 c_sources = injector.c injector_stack.c
 
-AM_CFLAGS = -I$(top_srcdir) -I$(top_srcdir)/src -I$(srcdir)
-AM_CFLAGS += $(CFLAGS)
-AM_CFLAGS += $(VMI_CFLAGS)
-AM_CFLAGS += $(GLIB_CFLAGS)
+AM_CPPFLAGS = -I$(top_srcdir) -I$(top_srcdir)/src -I$(srcdir)
+AM_CPPFLAGS += $(VMI_CFLAGS)
+AM_CPPFLAGS += $(GLIB_CFLAGS)
 
+AM_LDFLAGS =  $(LDFLAGS)
+AM_LDFLAGS += $(VMI_LIBS)
+AM_LDFLAGS += $(GLIB_LIBS)
+
+AM_CFLAGS = $(CFLAGS)
 if HARDENING
 AM_CFLAGS += $(HARDEN_CFLAGS) -DHARDENING
+endif
+
+if SANITIZE
+AM_CFLAGS += $(SANITIZE_CFLAGS)
+AM_LDFLAGS += $(SANITIZE_LDFLAGS)
 endif
 
 # Note that -pg is incompatible with HARDENING

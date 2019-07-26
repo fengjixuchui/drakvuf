@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2017 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -152,6 +152,7 @@ static event_response_t cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
     vmi_instance_t vmi = drakvuf_lock_and_get_vmi(drakvuf);
     struct ckey ckey = {};
 
+    gchar* escaped_pname = NULL;
     access_context_t ctx;
     ctx.translate_mechanism = VMI_TM_PROCESS_DTB;
     ctx.dtb = info->regs->cr3;
@@ -184,6 +185,25 @@ static event_response_t cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
                    ckey._key[0], ckey._key[1], ckey._key[2], ckey._key[3]);
             break;
 
+        case OUTPUT_JSON:
+            escaped_pname = drakvuf_escape_str(info->proc_data.name);
+            printf( "{"
+                    "\"Plugin\" : \"objmon\","
+                    "\"TimeStamp\" :" "\"" FORMAT_TIMEVAL "\","
+                    "\"ProcessName\": %s,"
+                    "\"UserId\": %" PRIu64 ","
+                    "\"PID\" : %d,"
+                    "\"PPID\": %d,"
+                    "\"Key\" : \"%c%c%c%c\""
+                    "}", // EOL below
+                    UNPACK_TIMEVAL(info->timestamp),
+                    escaped_pname,
+                    info->proc_data.userid,
+                    info->proc_data.pid, info->proc_data.ppid,
+                    ckey._key[0], ckey._key[1], ckey._key[2], ckey._key[3]);
+            g_free(escaped_pname);
+            break;
+
         default:
         case OUTPUT_DEFAULT:
             printf("[OBJMON] TIME:" FORMAT_TIMEVAL " VCPU:%" PRIu32 " CR3:0x%" PRIx64 ",\"%s\" %s:%" PRIi64" '%c%c%c%c'",
@@ -201,7 +221,7 @@ static event_response_t cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 
 /* ----------------------------------------------------- */
 
-objmon::objmon(drakvuf_t drakvuf, const void* config, output_format_t output)
+objmon::objmon(drakvuf_t drakvuf, output_format_t output)
 {
     if ( !drakvuf_get_function_rva(drakvuf, "ObCreateObject", &this->trap.breakpoint.rva) )
         throw -1;

@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
 *                                                                         *
-* DRAKVUF (C) 2014-2017 Tamas K Lengyel.                                  *
+* DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
 * Tamas K Lengyel is hereinafter referred to as the author.               *
 * This program is free software; you may redistribute and/or modify it    *
 * under the terms of the GNU General Public License as published by the   *
@@ -105,8 +105,8 @@
 #include <libdrakvuf/libdrakvuf.h>
 
 #include "bsodmon.h"
+#include "private.h"
 #include "bugcheck.h"
-
 
 static event_response_t hook_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
@@ -121,6 +121,7 @@ static event_response_t hook_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
     uint64_t code = 0;
     uint64_t params[4] = { 0 };
     const char* bugcheck_name = "UNKNOWN_CODE" ;
+    gchar* escaped_pname = NULL;
 
     bool is32bit = drakvuf_get_page_mode(drakvuf) != VMI_PM_IA32E;
 
@@ -176,6 +177,31 @@ static event_response_t hook_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
                    UNPACK_TIMEVAL(info->timestamp), info->proc_data.pid, info->proc_data.ppid,
                    info->proc_data.name, code, bugcheck_name, params[0], params[1], params[2], params[3]);
             break;
+        case OUTPUT_JSON:
+            escaped_pname = drakvuf_escape_str(info->proc_data.name);
+            printf( "{"
+                    "\"Plugin\" : \"bsodmon\","
+                    "\"TimeStamp\" :" "\"" FORMAT_TIMEVAL "\","
+                    "\"VCPU\": %" PRIu32 ","
+                    "\"CR3\": %" PRIu64 ","
+                    "\"ProcessName\": %s,"
+                    "\"UserId\": %" PRIu64 ","
+                    "\"PID\" : %d,"
+                    "\"PPID\": %d,"
+                    "\"BugCheckCode\": %" PRIu64 ","
+                    "\"BugCheckName\": \"%s\","
+                    "\"BugCheckParameter1\": %" PRIu64 ","
+                    "\"BugCheckParameter2\": %" PRIu64 ","
+                    "\"BugCheckParameter3\": %" PRIu64 ","
+                    "\"BugCheckParameter4\": %" PRIu64
+                    "}\n",
+                    UNPACK_TIMEVAL(info->timestamp),
+                    info->vcpu, info->regs->cr3, escaped_pname,
+                    info->proc_data.userid,
+                    info->proc_data.pid, info->proc_data.ppid,
+                    code, bugcheck_name, params[0], params[1], params[2], params[3]);
+            g_free(escaped_pname);
+            break;
         default:
         case OUTPUT_DEFAULT:
             printf("[BSODMON] TIME:" FORMAT_TIMEVAL " VCPU:%" PRIu32 " CR3:0x%" PRIx64 ",\"%s\" %s:%" PRIi64
@@ -190,27 +216,18 @@ done:
     drakvuf_release_vmi(drakvuf);
 
     if ( f->abort_on_bsod )
-        drakvuf_interrupt( drakvuf, -1);
+        drakvuf_interrupt( drakvuf, SIGDRAKVUFERROR);
 
     return 0;
 }
 
-void bsodmon::register_trap(drakvuf_t drakvuf, const char* syscall_name,
-                            drakvuf_trap_t* trap,
-                            event_response_t(*hook_cb)( drakvuf_t drakvuf, drakvuf_trap_info_t* info ))
+bsodmon::bsodmon(drakvuf_t drakvuf, bool _abort_on_bsod, output_format_t output)
+    : format{output}
+    , abort_on_bsod{_abort_on_bsod}
 {
-    trap->name = syscall_name;
-    trap->cb   = hook_cb;
-    if ( !drakvuf_get_function_rva( drakvuf, syscall_name, &trap->breakpoint.rva) ) throw -1;
-    if ( ! drakvuf_add_trap( drakvuf, trap ) ) throw -1;
-}
-
-bsodmon::bsodmon(drakvuf_t drakvuf, const void* config, output_format_t output)
-    : format(output)
-{
-    this->abort_on_bsod = *(bool*)config;
-
     init_bugcheck_map( this, drakvuf );
-
-    register_trap(drakvuf, "KeBugCheck2", &trap, hook_cb);
+    trap.name = "KeBugCheck2";
+    trap.cb   = hook_cb;
+    if ( !drakvuf_get_function_rva( drakvuf, "KeBugCheck2", &trap.breakpoint.rva) ) throw -1;
+    if ( ! drakvuf_add_trap( drakvuf, &trap ) ) throw -1;
 }

@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2017 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -119,12 +119,14 @@
 
 #include <libvmi/libvmi.h>
 #include "../plugins.h"
+#include "private.h"
 #include "cpuidmon.h"
 
 event_response_t cpuid_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
 
     cpuidmon* s = (cpuidmon*)info->trap->data;
+    gchar* escaped_pname = NULL;
 
     switch (s->format)
     {
@@ -142,6 +144,34 @@ event_response_t cpuid_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
                    info->regs->rax, info->regs->rbx, info->regs->rcx, info->regs->rdx);
             break;
 
+        case OUTPUT_JSON:
+            escaped_pname = drakvuf_escape_str(info->proc_data.name);
+            printf( "{"
+                    "\"Plugin\" : \"cpuidmon\","
+                    "\"TimeStamp\" :" "\"" FORMAT_TIMEVAL "\","
+                    "\"VCPU\": %" PRIu32 ","
+                    "\"CR3\": %" PRIu64 ","
+                    "\"ProcessName\": %s,"
+                    "\"UserName\": \"%s\","
+                    "\"UserId\": %" PRIu64 ","
+                    "\"PID\" : %d,"
+                    "\"PPID\": %d,"
+                    "\"Leaf\": %" PRIu32 ","
+                    "\"Subleaf\": %" PRIu32 ","
+                    "\"RAX\": %" PRIu64 ","
+                    "\"RBX\": %" PRIu64 ","
+                    "\"RCX\": %" PRIu64 ","
+                    "\"RDX\": %" PRIu64 ""
+                    "}\n",
+                    UNPACK_TIMEVAL(info->timestamp),
+                    info->vcpu, info->regs->cr3, escaped_pname,
+                    USERIDSTR(drakvuf), info->proc_data.userid,
+                    info->proc_data.pid, info->proc_data.ppid,
+                    info->cpuid->leaf, info->cpuid->subleaf,
+                    info->regs->rax, info->regs->rbx, info->regs->rcx, info->regs->rdx);
+            g_free(escaped_pname);
+            break;
+
         default:
         case OUTPUT_DEFAULT:
             printf("[CPUIDMON] TIME:" FORMAT_TIMEVAL " VCPU:%" PRIu32 " CR3:0x%" PRIx64 ",\"%s\" %s:%" PRIi64". "
@@ -153,7 +183,7 @@ event_response_t cpuid_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
                    info->regs->rax, info->regs->rbx, info->regs->rcx, info->regs->rdx
                   );
             break;
-    };
+    }
 
     if ( s->stealth )
     {
@@ -176,13 +206,11 @@ event_response_t cpuid_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 
 /* ----------------------------------------------------- */
 
-cpuidmon::cpuidmon(drakvuf_t drakvuf, const void* config, output_format_t output)
+cpuidmon::cpuidmon(drakvuf_t _drakvuf, bool _stealth, output_format_t _output)
+    : format{_output}
+    , drakvuf{_drakvuf}
+    , stealth{_stealth}
 {
-
-    this->format = output;
-    this->stealth = *(bool*)config;
-    this->drakvuf = drakvuf;
-
     this->cpuid.cb = cpuid_cb;
     this->cpuid.data = (void*)this;
     this->cpuid.type = CPUID;

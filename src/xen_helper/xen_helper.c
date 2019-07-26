@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2016 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -211,7 +211,7 @@ int get_dom_info(xen_interface_t* xen, const char* input, domid_t* domID,
         xc_dominfo_t info = { 0 };
 
         if ( 1 == xc_domain_getinfo(xen->xc, _domID, 1, &info)
-                && info.domid == _domID)
+             && info.domid == _domID)
         {
             _name = libxl_domid_to_name(xen->xl_ctx, _domID);
         }
@@ -245,7 +245,8 @@ uint64_t xen_memshare(xen_interface_t* xen, domid_t domID, domid_t cloneID)
 #if __XEN_INTERFACE_VERSION__ < 0x00040600
     uint64_t page, max_page = xc_domain_maximum_gpfn(xen->xc, domID);
 #else
-    xen_pfn_t page, max_page;
+    xen_pfn_t page;
+    xen_pfn_t max_page;
     if (xc_domain_maximum_gpfn(xen->xc, domID, &max_page))
     {
         printf("Failed to get max gpfn from Xen!\n");
@@ -275,7 +276,8 @@ uint64_t xen_memshare(xen_interface_t* xen, domid_t domID, domid_t cloneID)
      */
     for (page = max_page; page <= max_page; page--)
     {
-        uint64_t shandle, chandle;
+        uint64_t shandle;
+        uint64_t chandle;
 
         if (xc_memshr_nominate_gfn(xen->xc, domID, page, &shandle))
             continue;
@@ -334,6 +336,5 @@ void xen_force_resume(xen_interface_t* xen, domid_t domID)
         else
             break;
 
-    }
-    while (1);
+    } while (1);
 }

@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2016 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -122,11 +122,27 @@ enum win_offsets
     EPROCESS_OBJECTTABLE,
     EPROCESS_PCB,
     EPROCESS_INHERITEDPID,
+    EPROCESS_WOW64PROCESS,
+    EPROCESS_WOW64PROCESS_WIN10,
+
+    EPROCESS_VADROOT,
+
+    VADROOT_BALANCED_ROOT,
+
+    MMVAD_LEFT_CHILD,
+    MMVAD_RIGHT_CHILD,
+    MMVAD_STARTING_VPN,
+    MMVAD_ENDING_VPN,
+    MMVAD_FLAGS1,
+    MMVAD_SUBSECTION,
+    SUBSECTION_CONTROL_AREA,
+    CONTROL_AREA_FILEPOINTER,
 
     KPROCESS_HEADER,
 
     PEB_IMAGEBASADDRESS,
     PEB_LDR,
+    PEB_PROCESSPARAMETERS,
     PEB_SESSIONID,
 
     PEB_LDR_DATA_INLOADORDERMODULELIST,
@@ -134,6 +150,7 @@ enum win_offsets
     LDR_DATA_TABLE_ENTRY_DLLBASE,
     LDR_DATA_TABLE_ENTRY_SIZEOFIMAGE,
     LDR_DATA_TABLE_ENTRY_BASEDLLNAME,
+    LDR_DATA_TABLE_ENTRY_FULLDLLNAME,
 
     HANDLE_TABLE_TABLECODE,
 
@@ -144,6 +161,9 @@ enum win_offsets
     KTHREAD_PROCESS,
     KTHREAD_PREVIOUSMODE,
     KTHREAD_HEADER,
+    KTHREAD_TEB,
+
+    TEB_LASTERRORVALUE,
 
     ETHREAD_CID,
     ETHREAD_TCB,
@@ -170,6 +190,10 @@ enum win_offsets
     OBJECTNAMEINFORMATION_NAME,
 
     FILEOBJECT_NAME,
+
+    RTL_USER_PROCESS_PARAMETERS_COMMANDLINE,
+
+    EWOW64PROCESS_PEB,
 
     __WIN_OFFSETS_MAX
 };

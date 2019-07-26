@@ -1,6 +1,6 @@
 #********************IMPORTANT DRAKVUF LICENSE TERMS**********************#
 #                                                                         #
-# DRAKVUF (C) 2014-2016 Tamas K Lengyel.                                  #
+# DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  #
 # Tamas K Lengyel is hereinafter referred to as the author.               #
 # This program is free software; you may redistribute and/or modify it    #
 # under the terms of the GNU General Public License as published by the   #
@@ -105,9 +105,17 @@
 h_sources = xen_helper.h
 c_sources = xen_helper.c
 
-AM_CFLAGS = -I$(top_srcdir)
-AM_CFLAGS += -Werror -Wall -Wextra $(CFLAGS) $(GLIB_CFLAGS)
+AM_CPPFLAGS = -I$(top_srcdir) $(GLIB_CFLAGS)
+AM_CFLAGS = -Werror -Wall -Wextra $(CFLAGS)
 AM_CFLAGS += -Wno-missing-field-initializers
+AM_LDFLAGS = $(LDFLAGS) $(GLIB_LIBS)
+
+if SANITIZE
+# For some reason this doesn't work.
+
+#AM_CFLAGS += $(SANITIZE_CFLAGS)
+#AM_LDFLAGS += $(SANITIZE_LDFLAGS)
+endif
 
 noinst_LTLIBRARIES= libxenhelper.la
 libxenhelper_la_SOURCES= $(h_sources) $(c_sources)

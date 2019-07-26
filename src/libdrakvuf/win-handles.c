@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2016 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -121,7 +121,9 @@
 static addr_t drakvuf_get_obj_by_handle_impl(drakvuf_t drakvuf, addr_t process, uint64_t handle)
 {
     vmi_instance_t vmi = drakvuf->vmi;
-    addr_t handletable = 0, tablecode = 0, obj = 0;
+    addr_t handletable = 0;
+    addr_t tablecode = 0;
+    addr_t obj = 0;
 
     if ( VMI_FAILURE == vmi_read_addr_va(vmi, process + drakvuf->offsets[EPROCESS_OBJECTTABLE], 0, &handletable) )
         return 0;
@@ -143,7 +145,8 @@ static addr_t drakvuf_get_obj_by_handle_impl(drakvuf_t drakvuf, addr_t process, 
             addr_t table = 0;
             size_t psize = drakvuf->address_width;
             uint32_t low_count = VMI_PS_4KB / drakvuf->sizes[HANDLE_TABLE_ENTRY];
-            uint32_t j, i = handle % (low_count * HANDLE_MULTIPLIER);
+            uint32_t j;
+            uint32_t i = handle % (low_count * HANDLE_MULTIPLIER);
 
             handle -= i;
             j = handle / ((low_count * HANDLE_MULTIPLIER) / psize);
@@ -156,11 +159,14 @@ static addr_t drakvuf_get_obj_by_handle_impl(drakvuf_t drakvuf, addr_t process, 
         }
         case 2:
         {
-            addr_t table = 0, table2 = 0;
+            addr_t table = 0;
+            addr_t table2 = 0;
             size_t psize = drakvuf->address_width;
             uint32_t low_count = VMI_PS_4KB / drakvuf->sizes[HANDLE_TABLE_ENTRY];
             uint32_t mid_count = VMI_PS_4KB / psize;
-            uint32_t k, j, i = handle % (low_count * HANDLE_MULTIPLIER);
+            uint32_t k;
+            uint32_t j;
+            uint32_t i = handle % (low_count * HANDLE_MULTIPLIER);
 
             handle -= i;
             j = handle / (low_count * HANDLE_MULTIPLIER / psize);
@@ -168,7 +174,7 @@ static addr_t drakvuf_get_obj_by_handle_impl(drakvuf_t drakvuf, addr_t process, 
             j = (j-k)/mid_count;
 
             if ( VMI_SUCCESS == vmi_read_addr_va(vmi, table_base + j, 0, &table) &&
-                    VMI_SUCCESS == vmi_read_addr_va(vmi, table + k, 0, &table2) )
+                 VMI_SUCCESS == vmi_read_addr_va(vmi, table + k, 0, &table2) )
                 vmi_read_addr_va(vmi, table2 + i * drakvuf->sizes[HANDLE_TABLE_ENTRY] / HANDLE_MULTIPLIER, 0, &obj);
             break;
         }
@@ -176,21 +182,29 @@ static addr_t drakvuf_get_obj_by_handle_impl(drakvuf_t drakvuf, addr_t process, 
 
     switch (vmi_get_winver(vmi))
     {
+        case VMI_OS_WINDOWS_XP:     /* fall-through */
+        case VMI_OS_WINDOWS_VISTA:  /* fall-through */
+        case VMI_OS_WINDOWS_2008:   /* fall-through */
         case VMI_OS_WINDOWS_7:
             return obj & ~EX_FAST_REF_MASK;
         case VMI_OS_WINDOWS_8:
             if ( drakvuf->pm == VMI_PM_IA32E )
-                return ((obj & VMI_BIT_MASK(19,63)) >> 16) | 0xFFFFE00000000000;
+                return ((obj & VMI_BIT_MASK(19, 63)) >> 16) | 0xFFFFE00000000000;
             else
-                return (obj & VMI_BIT_MASK(2,31));
-        default:
+                return (obj & VMI_BIT_MASK(2, 31));
         case VMI_OS_WINDOWS_10:
             // We set Win10 as the default case as vmi_get_winver may not pinpoint it as VMI_OS_WINDOWS_10 if the buildid is not known
             if ( drakvuf->pm == VMI_PM_IA32E )
-                return ((obj & VMI_BIT_MASK(19,63)) >> 16) | 0xFFFF000000000000;
+                return ((obj & VMI_BIT_MASK(19, 63)) >> 16) | 0xFFFF000000000000;
             else
-                return (obj & VMI_BIT_MASK(2,31));
-    };
+                return (obj & VMI_BIT_MASK(2, 31));
+        case VMI_OS_WINDOWS_2000:       /* fall-through */
+        case VMI_OS_WINDOWS_2003:       /* fall-through */
+        case VMI_OS_WINDOWS_UNKNOWN:    /* fall-through */
+        case VMI_OS_WINDOWS_NONE:       /* fall-through */
+        default:
+            return 0;
+    }
 }
 
 addr_t drakvuf_get_obj_by_handle(drakvuf_t drakvuf, addr_t process, uint64_t handle)
@@ -200,7 +214,7 @@ addr_t drakvuf_get_obj_by_handle(drakvuf_t drakvuf, addr_t process, uint64_t han
         // This is Kernel Mode handle
         if (!drakvuf_find_process(drakvuf, 4, NULL, &process))
             return 0;
-        handle = handle & VMI_BIT_MASK(0,30);
+        handle = handle & VMI_BIT_MASK(0, 30);
         return drakvuf_get_obj_by_handle_impl(drakvuf, process, handle);
     }
 

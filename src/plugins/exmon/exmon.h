@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2017 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -126,7 +126,7 @@ public:
     size_t* offsets;
     size_t ktrap_frame_size;
 
-    exmon(drakvuf_t drakvuf, const void* config, output_format_t output);
+    exmon(drakvuf_t drakvuf, output_format_t output);
     ~exmon();
 };
 

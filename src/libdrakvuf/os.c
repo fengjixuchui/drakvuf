@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2017 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -115,12 +115,12 @@
 
 bool fill_offsets_from_rekall(drakvuf_t drakvuf, size_t size, const char* names [][2])
 {
-    drakvuf->offsets = g_malloc0(sizeof(addr_t) * size );
+    drakvuf->offsets = (addr_t*)g_malloc0(sizeof(addr_t) * size );
     if ( !drakvuf->offsets )
         return 0;
 
     if (!drakvuf_get_struct_members_array_rva(
-                drakvuf, names, size, drakvuf->offsets))
+            drakvuf, names, size, drakvuf->offsets))
     {
         PRINT_DEBUG("Failed to find offsets for array of structure names and subsymbols.\n");
     }
@@ -128,18 +128,26 @@ bool fill_offsets_from_rekall(drakvuf_t drakvuf, size_t size, const char* names 
     return 1;
 }
 
-addr_t drakvuf_get_current_thread(drakvuf_t drakvuf, uint64_t vcpu_id)
+addr_t drakvuf_get_current_thread(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
     if ( drakvuf->osi.get_current_thread )
-        return drakvuf->osi.get_current_thread(drakvuf, vcpu_id);
+        return drakvuf->osi.get_current_thread(drakvuf, info);
 
     return 0;
 }
 
-addr_t drakvuf_get_current_process(drakvuf_t drakvuf, uint64_t vcpu_id)
+bool drakvuf_get_last_error(drakvuf_t drakvuf, drakvuf_trap_info_t* info, uint32_t* err, const char** err_str)
+{
+    if ( drakvuf->osi.get_last_error )
+        return drakvuf->osi.get_last_error(drakvuf, info, err, err_str);
+
+    return false;
+}
+
+addr_t drakvuf_get_current_process(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
     if ( drakvuf->osi.get_current_process )
-        return drakvuf->osi.get_current_process(drakvuf, vcpu_id);
+        return drakvuf->osi.get_current_process(drakvuf, info);
 
     return 0;
 }
@@ -152,18 +160,26 @@ char* drakvuf_get_process_name(drakvuf_t drakvuf, addr_t process_base, bool full
     return NULL;
 }
 
-status_t drakvuf_get_process_pid(drakvuf_t drakvuf, addr_t process_base, vmi_pid_t* pid)
+char* drakvuf_get_process_commandline(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t eprocess_base)
+{
+    if ( drakvuf->osi.get_process_commandline )
+        return drakvuf->osi.get_process_commandline(drakvuf, info, eprocess_base);
+
+    return NULL;
+}
+
+bool drakvuf_get_process_pid(drakvuf_t drakvuf, addr_t process_base, vmi_pid_t* pid)
 {
     if ( drakvuf->osi.get_process_pid )
         return drakvuf->osi.get_process_pid(drakvuf, process_base, pid);
 
-    return VMI_FAILURE;
+    return false;
 }
 
-char* drakvuf_get_current_process_name(drakvuf_t drakvuf, uint64_t vcpu_id, bool fullpath)
+char* drakvuf_get_current_process_name(drakvuf_t drakvuf, drakvuf_trap_info_t* info, bool fullpath)
 {
     if ( drakvuf->osi.get_current_process_name )
-        return drakvuf->osi.get_current_process_name(drakvuf, vcpu_id, fullpath);
+        return drakvuf->osi.get_current_process_name(drakvuf, info, fullpath);
 
     return NULL;
 }
@@ -176,18 +192,18 @@ int64_t drakvuf_get_process_userid(drakvuf_t drakvuf, addr_t process_base)
     return ~0l;
 }
 
-int64_t drakvuf_get_current_process_userid(drakvuf_t drakvuf, uint64_t vcpu_id)
+int64_t drakvuf_get_current_process_userid(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
     if ( drakvuf->osi.get_current_process_userid )
-        return drakvuf->osi.get_current_process_userid(drakvuf, vcpu_id);
+        return drakvuf->osi.get_current_process_userid(drakvuf, info);
 
     return ~0l;
 }
 
-bool drakvuf_get_current_thread_id( drakvuf_t drakvuf, uint64_t vcpu_id, uint32_t* thread_id )
+bool drakvuf_get_current_thread_id( drakvuf_t drakvuf, drakvuf_trap_info_t* info, uint32_t* thread_id )
 {
     if ( drakvuf->osi.get_current_thread_id )
-        return drakvuf->osi.get_current_thread_id(drakvuf, vcpu_id, thread_id);
+        return drakvuf->osi.get_current_thread_id(drakvuf, info, thread_id);
 
     return 0;
 }
@@ -202,11 +218,11 @@ bool drakvuf_get_thread_previous_mode( drakvuf_t drakvuf, addr_t kthread, privil
 }
 
 bool drakvuf_get_current_thread_previous_mode( drakvuf_t drakvuf,
-        uint64_t vcpu_id,
+        drakvuf_trap_info_t* info,
         privilege_mode_t* previous_mode )
 {
     if ( drakvuf->osi.get_current_thread_previous_mode )
-        return drakvuf->osi.get_current_thread_previous_mode(drakvuf, vcpu_id, previous_mode);
+        return drakvuf->osi.get_current_thread_previous_mode(drakvuf, info, previous_mode);
 
     return 0;
 }
@@ -259,6 +275,14 @@ bool drakvuf_get_module_base_addr(drakvuf_t drakvuf, addr_t module_list_head, co
     return 0;
 }
 
+bool drakvuf_get_module_base_addr_ctx(drakvuf_t drakvuf, addr_t module_list_head, access_context_t* ctx, const char* module_name, addr_t* base_addr_out)
+{
+    if ( drakvuf->osi.get_module_base_addr_ctx )
+        return drakvuf->osi.get_module_base_addr_ctx(drakvuf, module_list_head, ctx, module_name, base_addr_out);
+
+    return 0;
+}
+
 addr_t drakvuf_exportksym_to_va(drakvuf_t drakvuf, const vmi_pid_t pid, const char* proc_name,
                                 const char* mod_name, addr_t rva)
 {
@@ -277,23 +301,23 @@ addr_t drakvuf_exportsym_to_va(drakvuf_t drakvuf, addr_t process_addr,
     return 0;
 }
 
-status_t drakvuf_get_process_ppid(drakvuf_t drakvuf, addr_t process_base, vmi_pid_t* ppid )
+bool drakvuf_get_process_ppid(drakvuf_t drakvuf, addr_t process_base, vmi_pid_t* ppid)
 {
     if ( drakvuf->osi.get_process_ppid )
         return drakvuf->osi.get_process_ppid( drakvuf, process_base, ppid );
 
-    return VMI_FAILURE ;
+    return false;
 }
 
-bool drakvuf_get_current_process_data( drakvuf_t drakvuf, uint64_t vcpu_id, proc_data_t* proc_data )
+bool drakvuf_get_process_data_priv(drakvuf_t drakvuf, addr_t process_base, proc_data_priv_t* proc_data)
 {
-    if ( drakvuf->osi.get_current_process_data )
-        return drakvuf->osi.get_current_process_data( drakvuf, vcpu_id, proc_data );
+    if ( drakvuf->osi.get_process_data )
+        return drakvuf->osi.get_process_data( drakvuf, process_base, proc_data );
 
     return false;
 }
 
-char* drakvuf_reg_keyhandle_path(drakvuf_t drakvuf, drakvuf_trap_info_t* info, uint64_t key_handle )
+char* drakvuf_reg_keyhandle_path(drakvuf_t drakvuf, drakvuf_trap_info_t* info, uint64_t key_handle)
 {
     if ( drakvuf->osi.get_registry_keyhandle_path )
         return drakvuf->osi.get_registry_keyhandle_path( drakvuf, info, key_handle );
@@ -317,10 +341,44 @@ addr_t drakvuf_get_function_argument(drakvuf_t drakvuf, drakvuf_trap_info_t* inf
     return 0;
 }
 
-bool drakvuf_enumerate_processes_with_module(drakvuf_t drakvuf, const char* module_name, bool (*visitor_func)(drakvuf_t drakvuf, addr_t eprocess_addr, void* visitor_ctx), void* visitor_ctx)
+bool drakvuf_enumerate_processes(drakvuf_t drakvuf, void (*visitor_func)(drakvuf_t drakvuf, addr_t process, void* visitor_ctx), void* visitor_ctx)
+{
+    if ( drakvuf->osi.enumerate_processes )
+        return drakvuf->osi.enumerate_processes(drakvuf, visitor_func, visitor_ctx);
+
+    return false;
+}
+
+bool drakvuf_enumerate_processes_with_module(drakvuf_t drakvuf, const char* module_name, bool (*visitor_func)(drakvuf_t drakvuf, const module_info_t* module_info, void* visitor_ctx), void* visitor_ctx)
 {
     if ( drakvuf->osi.enumerate_processes_with_module )
         return drakvuf->osi.enumerate_processes_with_module( drakvuf, module_name, visitor_func, visitor_ctx );
+
+    return false;
+}
+
+bool drakvuf_is_crashreporter(drakvuf_t drakvuf, drakvuf_trap_info_t* info, vmi_pid_t* pid)
+{
+    *pid = 0;
+
+    if ( drakvuf->osi.is_crashreporter )
+        return drakvuf->osi.is_crashreporter( drakvuf, info, pid );
+
+    return false;
+}
+
+bool drakvuf_find_mmvad(drakvuf_t drakvuf, addr_t eprocess, addr_t vaddr, mmvad_info_t* out_mmvad)
+{
+    if ( drakvuf->osi.find_mmvad )
+        return drakvuf->osi.find_mmvad(drakvuf, eprocess, vaddr, out_mmvad);
+
+    return false;
+}
+
+bool drakvuf_get_pid_from_handle(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t handle, vmi_pid_t* pid)
+{
+    if ( drakvuf->osi.get_pid_from_handle )
+        return drakvuf->osi.get_pid_from_handle(drakvuf, info, handle, pid);
 
     return false;
 }

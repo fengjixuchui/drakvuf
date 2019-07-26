@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2017 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -119,6 +119,7 @@
 
 #include <libvmi/libvmi.h>
 #include "../plugins.h"
+#include "private.h"
 #include "debugmon.h"
 
 # define HVMOP_TRAP_ext_int    0
@@ -142,6 +143,7 @@ event_response_t debug_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
 
     debugmon* s = (debugmon*)info->trap->data;
+    gchar* escaped_pname = NULL;
 
     switch (s->format)
     {
@@ -158,6 +160,30 @@ event_response_t debug_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
                    info->regs->rip, info->debug->type, debug_type[info->debug->type]);
             break;
 
+        case OUTPUT_JSON:
+            escaped_pname = drakvuf_escape_str(info->proc_data.name);
+            printf( "{"
+                    "\"Plugin\" : \"poolmon\","
+                    "\"TimeStamp\" :" "\"" FORMAT_TIMEVAL "\","
+                    "\"VCPU\": %" PRIu32 ","
+                    "\"CR3\": %" PRIu64 ","
+                    "\"ProcessName\": %s,"
+                    "\"UserName\": \"%s\","
+                    "\"UserId\": %" PRIu64 ","
+                    "\"PID\" : %d,"
+                    "\"PPID\": %d,"
+                    "\"RIP\" : %" PRIu64","
+                    "\"DebugType\" : %" PRIi32 ","
+                    "\"DebugTypeStr\": \"%s\""
+                    "}\n",
+                    UNPACK_TIMEVAL(info->timestamp),
+                    info->vcpu, info->regs->cr3, escaped_pname,
+                    USERIDSTR(drakvuf), info->proc_data.userid,
+                    info->proc_data.pid, info->proc_data.ppid,
+                    info->regs->rip, info->debug->type, debug_type[info->debug->type]);
+            g_free(escaped_pname);
+            break;
+
         default:
         case OUTPUT_DEFAULT:
             printf("[DEBUGMON] TIME:" FORMAT_TIMEVAL " VCPU:%" PRIu32 " CR3:0x%" PRIx64 ",\"%s\" %s:%" PRIi64". "
@@ -166,18 +192,17 @@ event_response_t debug_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
                    USERIDSTR(drakvuf), info->proc_data.userid,
                    info->regs->rip, info->debug->type, debug_type[info->debug->type]);
             break;
-    };
+    }
 
     return 0;
 }
 
 /* ----------------------------------------------------- */
 
-debugmon::debugmon(drakvuf_t drakvuf, const void* config, output_format_t output)
+debugmon::debugmon(drakvuf_t _drakvuf, output_format_t _output)
+    : format{_output}
+    , drakvuf{_drakvuf}
 {
-
-    this->format = output;
-    this->drakvuf = drakvuf;
     this->debug.cb = debug_cb;
     this->debug.data = (void*)this;
     this->debug.type = DEBUG;

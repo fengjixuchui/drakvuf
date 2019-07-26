@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2017 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -103,6 +103,8 @@
  ***************************************************************************/
 
 #include <config.h>
+#include <ctype.h>
+#include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <inttypes.h>
@@ -127,16 +129,36 @@ static inline void disable_plugin(char* optarg, bool* plugin_list)
             plugin_list[i] = false;
 }
 
+static inline void disable_all_plugins(bool* plugin_list)
+{
+    for (int i = 0; i < __DRAKVUF_PLUGIN_LIST_MAX; i++)
+        plugin_list[i] = false;
+}
+
+static inline void enable_plugin(char* optarg, bool* plugin_list, bool* disabled_all)
+{
+    if (!*disabled_all)
+    {
+        disable_all_plugins(plugin_list);
+        *disabled_all = true;
+    }
+    for (int i = 0; i < __DRAKVUF_PLUGIN_LIST_MAX; i++)
+        if (!strcmp(optarg, drakvuf_plugin_names[i]))
+            plugin_list[i] = true;
+}
+
 int main(int argc, char** argv)
 {
-    int c, rc = 1, timeout = 0;
+    int c;
+    int rc = 1;
+    int timeout = 0;
     char const* inject_file = nullptr;
     char const* inject_cwd = nullptr;
     injection_method_t injection_method = INJECT_METHOD_CREATEPROC;
+    int injection_timeout = 0;
+    bool injection_global_search = false;
     char* domain = nullptr;
     char* rekall_profile = nullptr;
-    char* dump_folder = nullptr;
-    char* tcpip = nullptr;
     char* binary_path = nullptr;
     char* target_process = nullptr;
     vmi_pid_t injection_pid = -1;
@@ -145,13 +167,12 @@ int main(int argc, char** argv)
     output_format_t output = OUTPUT_DEFAULT;
     bool plugin_list[] = {[0 ... __DRAKVUF_PLUGIN_LIST_MAX-1] = 1};
     bool verbose = false;
-    bool cpuid_stealth = false;
     bool leave_paused = false;
-    char const* syscalls_filter_file = nullptr;
-    bool dump_modified_files = false;
-    bool filedelete_use_injector = false;
-    bool abort_on_bsod = false;
     bool libvmi_conf = false;
+    char* rekall_wow_profile = nullptr;
+    plugins_options options = { 0 };
+    bool disabled_all = false; // Used to disable all plugin once
+
 
     eprint_current_time();
     fprintf(stderr, "%s v%s\n", PACKAGE_NAME, PACKAGE_VERSION);
@@ -166,7 +187,8 @@ int main(int argc, char** argv)
     if (argc < 4)
     {
         fprintf(stderr, "Required input:\n"
-                "\t -r <rekall profile>       The Rekall profile of the OS kernel\n"
+                "\t -r, --rekall-kernel <rekall profile>\n"
+                "\t                           The Rekall profile of the OS kernel\n"
                 "\t -d <domain ID or name>    The domain's ID or name\n"
                 "Optional inputs:\n"
                 "\t -l                        Use libvmi.conf\n"
@@ -175,9 +197,13 @@ int main(int argc, char** argv)
                 "\t -e <inject_file>          The executable to start with injection\n"
                 "\t -c <current_working_dir>  The current working directory for injected executable\n"
                 "\t -m <inject_method>        The injection method: createproc, shellexec, shellcode, doppelganging\n"
+                "\t -g                        Search required for injection functions in all processes\n"
+                "\t -j, --injection-timeout <seconds>\n"
+                "\t                           Injection timeout (in seconds, 0 == no timeout)\n"
                 "\t -t <timeout>              Timeout (in seconds)\n"
-                "\t -o <format>               Output format (default or csv)\n"
+                "\t -o <format>               Output format (default, csv, kv, or json)\n"
                 "\t -x <plugin>               Don't activate the specified plugin\n"
+                "\t -a <plugin>               Activate the specified plugin\n"
                 "\t -p                        Leave domain paused after DRAKVUF exits\n"
 #ifdef ENABLE_DOPPELGANGING
                 "\t -B <path>                 The host path of the windows binary to inject (requires -m doppelganging)\n"
@@ -189,13 +215,14 @@ int main(int argc, char** argv)
                 "\t -n                        Use extraction method based on function injection (requires -D)\n"
 #endif
 #ifdef ENABLE_PLUGIN_SOCKETMON
-                "\t -T <rekall profile>       The Rekall profile for tcpip.sys\n"
+                "\t -T, --rekall-tcpip <rekall profile>\n"
+                "\t                           The Rekall profile for tcpip.sys\n"
 #endif
 #ifdef ENABLE_PLUGIN_CPUIDMON
                 "\t -s                        Hide Hypervisor bits and signature in CPUID\n"
 #endif
 #ifdef DRAKVUF_DEBUG
-                "\t -v                        Turn on verbose (debug) output\n"
+                "\t -v, --verbose             Turn on verbose (debug) output\n"
 #endif
 #ifdef ENABLE_PLUGIN_SYSCALLS
                 "\t -S <syscalls filter>      File with list of syscalls for trap in syscalls plugin (trap all if parameter is absent)\n"
@@ -203,11 +230,77 @@ int main(int argc, char** argv)
 #ifdef ENABLE_PLUGIN_BSODMON
                 "\t -b                        Exit from execution as soon as a BSoD is detected\n"
 #endif
+                "\t -w, --rekall-wow <rekall profile>\n"
+                "\t                           The Rekall profile for WoW64 NTDLL\n"
+#ifdef ENABLE_PLUGIN_CLIPBOARDMON
+                "\t -W, --rekall-win32k <rekall profile>\n"
+                "\t                           The Rekall profile for win32k.sys\n"
+#endif
+                "\t --rekall-sspicli <rekall profile>\n"
+                "\t                           The Rekall profile for sspicli.dll\n"
+                "\t --rekall-kernel32 <rekall profile>\n"
+                "\t                           The Rekall profile for kernel32.dll\n"
+                "\t --rekall-kernelbase <rekall profile>\n"
+                "\t                           The Rekall profile for KernelBase.dll\n"
+                "\t --rekall-wow-kernel32 <rekall profile>\n"
+                "\t                           The Rekall profile for SysWOW64/kernel32.dll\n"
+                "\t --rekall-ntdll <rekall profile>\n"
+                "\t                           The Rekall profile for ntdll.dll\n"
+                "\t --rekall-iphlpapi <rekall profile>\n"
+                "\t                           The Rekall profile for iphlpapi.dll\n"
+#ifdef ENABLE_PLUGIN_WMIMON
+                "\t --rekall-mpr <rekall profile>\n"
+                "\t                           The Rekall profile for mpr.dll\n"
+                "\t --rekall-ole32 <rekall profile>\n"
+                "\t                           The Rekall profile for ole32.dll\n"
+                "\t --rekall-wow-ole32 <rekall profile>\n"
+                "\t                           The Rekall profile for SysWOW64/ole32.dll\n"
+#endif
+#ifdef ENABLE_PLUGIN_MEMDUMP
+                "\t --memdump-dir <directory>\n"
+                "\t                           Where to store memory dumps\n"
+#endif
                );
         return rc;
     }
 
-    while ((c = getopt (argc, argv, "r:d:i:I:e:m:t:D:o:vx:spT:S:Mc:nbl")) != -1)
+    int long_index = 0;
+    enum
+    {
+        opt_rekall_sspicli = 1000,
+        opt_rekall_kernel32,
+        opt_rekall_kernelbase,
+        opt_rekall_wow_kernel32,
+        opt_rekall_ntdll,
+        opt_rekall_iphlpapi,
+        opt_rekall_mpr,
+        opt_rekall_ole32,
+        opt_rekall_wow_ole32,
+        opt_memdump_dir,
+    };
+    const option long_opts[] =
+    {
+        {"rekall-kernel", required_argument, NULL, 'r'},
+        {"rekall-kernel32", required_argument, NULL, opt_rekall_kernel32},
+        {"rekall-kernelbase", required_argument, NULL, opt_rekall_kernelbase},
+        {"rekall-sspicli", required_argument, NULL, opt_rekall_sspicli},
+        {"rekall-tcpip", required_argument, NULL, 'T'},
+        {"rekall-win32k", required_argument, NULL, 'W'},
+        {"rekall-wow", required_argument, NULL, 'w'},
+        {"rekall-wow-kernel32", required_argument, NULL, opt_rekall_wow_kernel32},
+        {"rekall-ntdll", required_argument, NULL, opt_rekall_ntdll},
+        {"rekall-iphlpapi", required_argument, NULL, opt_rekall_iphlpapi},
+        {"rekall-mpr", required_argument, NULL, opt_rekall_mpr},
+        {"injection-timeout", required_argument, NULL, 'j'},
+        {"verbose", no_argument, NULL, 'v'},
+        {"rekall-ole32", required_argument, NULL, opt_rekall_ole32},
+        {"rekall-wow-ole32", required_argument, NULL, opt_rekall_wow_ole32},
+        {"memdump-dir", required_argument, NULL, opt_memdump_dir},
+        {NULL, 0, NULL, 0}
+    };
+    const char* opts = "r:d:i:I:e:m:t:D:o:vx:a:spT:S:Mc:nblgj:w:W:";
+
+    while ((c = getopt_long (argc, argv, opts, long_opts, &long_index)) != -1)
         switch (c)
         {
             case 'r':
@@ -228,14 +321,20 @@ int main(int argc, char** argv)
             case 'c':
                 inject_cwd = optarg;
                 break;
+            case 'g':
+                injection_global_search = true;
+                break;
+            case 'j':
+                injection_timeout = atoi(optarg);
+                break;
             case 'm':
-                if (!strncmp(optarg,"shellexec",9))
+                if (!strncmp(optarg, "shellexec", 9))
                     injection_method = INJECT_METHOD_SHELLEXEC;
-                if (!strncmp(optarg,"createproc",10))
+                if (!strncmp(optarg, "createproc", 10))
                     injection_method = INJECT_METHOD_CREATEPROC;
-                if (!strncmp(optarg,"shellcode",9))
+                if (!strncmp(optarg, "shellcode", 9))
                     injection_method = INJECT_METHOD_SHELLCODE;
-                if (!strncmp(optarg,"doppelganging",13))
+                if (!strncmp(optarg, "doppelganging", 13))
 #ifdef ENABLE_DOPPELGANGING
                     injection_method = INJECT_METHOD_DOPP;
 #else
@@ -257,25 +356,33 @@ int main(int argc, char** argv)
                 timeout = atoi(optarg);
                 break;
             case 'D':
-                dump_folder = optarg;
+                options.dump_folder = optarg;
                 break;
             case 'o':
-                if (!strncmp(optarg,"csv",3))
+                if (!strncmp(optarg, "csv", 3))
                     output = OUTPUT_CSV;
-                if (!strncmp(optarg,"kv",2))
+                if (!strncmp(optarg, "kv", 2))
                     output = OUTPUT_KV;
+                if (!strncmp(optarg, "json", 4))
+                    output = OUTPUT_JSON;
                 break;
             case 'x':
                 disable_plugin(optarg, plugin_list);
                 break;
+            case 'a':
+                enable_plugin(optarg, plugin_list, &disabled_all);
+                break;
             case 's':
-                cpuid_stealth = true;
+                options.cpuid_stealth = true;
                 break;
             case 'p':
                 leave_paused = true;
                 break;
             case 'T':
-                tcpip = optarg;
+                options.tcpip_profile = optarg;
+                break;
+            case 'W':
+                options.win32k_profile = optarg;
                 break;
 #ifdef DRAKVUF_DEBUG
             case 'v':
@@ -283,22 +390,62 @@ int main(int argc, char** argv)
                 break;
 #endif
             case 'S':
-                syscalls_filter_file = optarg;
+                options.syscalls_filter_file = optarg;
                 break;
             case 'M':
-                dump_modified_files = true;
+                options.dump_modified_files = true;
                 break;
             case 'n':
-                filedelete_use_injector = true;
+                options.filedelete_use_injector = true;
                 break;
             case 'b':
-                abort_on_bsod = true;
+                options.abort_on_bsod = true;
                 break;
             case 'l':
                 libvmi_conf = true;
                 break;
+            case 'w':
+                rekall_wow_profile = optarg;
+                break;
+            case opt_rekall_sspicli:
+                options.sspicli_profile = optarg;
+                break;
+            case opt_rekall_kernel32:
+                options.kernel32_profile = optarg;
+                break;
+            case opt_rekall_kernelbase:
+                options.kernelbase_profile = optarg;
+                break;
+            case opt_rekall_wow_kernel32:
+                options.wow_kernel32_profile = optarg;
+                break;
+            case opt_rekall_ntdll:
+                options.ntdll_profile = optarg;
+                break;
+            case opt_rekall_iphlpapi:
+                options.iphlpapi_profile = optarg;
+                break;
+            case opt_rekall_mpr:
+                options.mpr_profile = optarg;
+                break;
+#ifdef ENABLE_PLUGIN_WMIMON
+            case opt_rekall_ole32:
+                options.ole32_profile = optarg;
+                break;
+            case opt_rekall_wow_ole32:
+                options.wow_ole32_profile = optarg;
+                break;
+#endif
+#ifdef ENABLE_PLUGIN_MEMDUMP
+            case opt_memdump_dir:
+                options.memdump_dir = optarg;
+                break;
+#endif
             default:
-                fprintf(stderr, "Unrecognized option: %c\n", c);
+                if (isalnum(c))
+                    fprintf(stderr, "Unrecognized option: %c\n", c);
+                else
+                    fprintf(stderr, "Unrecognized option: %s\n", long_opts[long_index].name);
                 return rc;
         }
 
@@ -314,7 +461,7 @@ int main(int argc, char** argv)
         return rc;
     }
 
-    if ( INJECT_METHOD_DOPP == injection_method && (!binary_path || !target_process) )
+    if (INJECT_METHOD_DOPP == injection_method && (!binary_path || !target_process))
     {
         fprintf(stderr, "Missing parameters for process doppelganging injection (-B and -P)!\n");
         return rc;
@@ -324,7 +471,7 @@ int main(int argc, char** argv)
 
     try
     {
-        drakvuf = new drakvuf_c(domain, rekall_profile, output, timeout, verbose, leave_paused, libvmi_conf);
+        drakvuf = new drakvuf_c(domain, rekall_profile, rekall_wow_profile, output, verbose, leave_paused, libvmi_conf);
     }
     catch (const std::exception& e)
     {
@@ -343,23 +490,23 @@ int main(int argc, char** argv)
     sigaction(SIGINT, &act, nullptr);
     sigaction(SIGALRM, &act, nullptr);
 
-    if ( injection_pid > 0 && inject_file )
+    if (injection_pid > 0 && inject_file)
     {
         PRINT_DEBUG("Starting injection with PID %i(%i) for %s\n", injection_pid, injection_thread, inject_file);
-        int ret = drakvuf->inject_cmd(injection_pid, injection_thread, inject_file, inject_cwd, injection_method, output, binary_path, target_process);
+        int ret = drakvuf->inject_cmd(injection_pid, injection_thread, inject_file, inject_cwd, injection_method, output, binary_path, target_process, injection_timeout, injection_global_search);
         if (!ret)
             goto exit;
     }
 
     PRINT_DEBUG("Starting plugins\n");
 
-    if ( drakvuf->start_plugins(plugin_list, dump_folder, dump_modified_files, filedelete_use_injector, cpuid_stealth, tcpip, syscalls_filter_file, abort_on_bsod) < 0 )
+    if (drakvuf->start_plugins(plugin_list, &options) < 0)
         goto exit;
 
     PRINT_DEBUG("Beginning DRAKVUF loop\n");
 
     /* Start the event listener */
-    drakvuf->loop();
+    drakvuf->loop(timeout);
     rc = 0;
 
     PRINT_DEBUG("Finished DRAKVUF loop\n");

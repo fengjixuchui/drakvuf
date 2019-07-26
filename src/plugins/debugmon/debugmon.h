@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2016 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -115,7 +115,7 @@ public:
     drakvuf_trap_t debug;
     drakvuf_t drakvuf;
 
-    debugmon(drakvuf_t drakvuf, const void* config, output_format_t output);
+    debugmon(drakvuf_t drakvuf, output_format_t output);
     ~debugmon();
 };
 

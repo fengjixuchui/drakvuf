@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2017 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -117,6 +117,13 @@ using handle_t = uint64_t;
 using handled_t = bool;
 using file_name_t = std::string;
 
+struct filedelete_config
+{
+    const char* dump_folder;
+    bool dump_modified_files;
+    bool filedelete_use_injector;
+};
+
 class filedelete: public plugin
 {
 public:
@@ -132,7 +139,8 @@ public:
         }
     };
     size_t* offsets;
-    size_t control_area_size, mmpte_size;
+    size_t control_area_size;
+    size_t mmpte_size;
 
     const char* dump_folder;
     page_mode_t pm;
@@ -143,7 +151,7 @@ public:
     std::map<std::pair<vmi_pid_t, handle_t>, file_name_t> files;
     int sequence_number;
 
-    filedelete(drakvuf_t drakvuf, const void* config, output_format_t output);
+    filedelete(drakvuf_t drakvuf, const filedelete_config* config, output_format_t output);
     ~filedelete();
 
     // For `filedelete2`

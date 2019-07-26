@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2016 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -150,6 +150,7 @@ int main(int argc, char** argv)
     char* domain = NULL;
     char* inject_file = NULL;
     char* inject_cwd = NULL;
+    bool injection_global_search = false;
     char* binary_path = NULL;
     char* target_process = NULL;
     injection_method_t injection_method = INJECT_METHOD_CREATEPROC;
@@ -162,7 +163,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    while ((c = getopt (argc, argv, "r:d:i:I:e:m:B:P:vl")) != -1)
+    while ((c = getopt (argc, argv, "r:d:i:I:e:m:B:P:vlg")) != -1)
         switch (c)
         {
             case 'r':
@@ -184,19 +185,22 @@ int main(int argc, char** argv)
                 inject_cwd = optarg;
                 break;
             case 'm':
-                if (!strncmp(optarg,"shellexec",9))
+                if (!strncmp(optarg, "shellexec", 9))
                     injection_method = INJECT_METHOD_SHELLEXEC;
-                else if (!strncmp(optarg,"createproc",10))
+                else if (!strncmp(optarg, "createproc", 10))
                     injection_method = INJECT_METHOD_CREATEPROC;
-                else if (!strncmp(optarg,"shellcode",9))
+                else if (!strncmp(optarg, "shellcode", 9))
                     injection_method = INJECT_METHOD_SHELLCODE;
-                else if (!strncmp(optarg,"doppelganging",13))
+                else if (!strncmp(optarg, "doppelganging", 13))
                     injection_method = INJECT_METHOD_DOPP;
                 else
                 {
                     fprintf(stderr, "Unrecognized injection method\n");
                     return rc;
                 }
+                break;
+            case 'g':
+                injection_global_search = true;
                 break;
             case 'B':
                 binary_path = optarg;
@@ -238,7 +242,7 @@ int main(int argc, char** argv)
     sigaction(SIGINT, &act, NULL);
     sigaction(SIGALRM, &act, NULL);
 
-    if (!drakvuf_init(&drakvuf, domain, rekall_profile, verbose, libvmi_conf))
+    if (!drakvuf_init(&drakvuf, domain, rekall_profile, NULL, verbose, libvmi_conf))
     {
         fprintf(stderr, "Failed to initialize on domain %s\n", domain);
         return 1;
@@ -246,7 +250,19 @@ int main(int argc, char** argv)
 
     printf("Injector starting %s through PID %u TID: %u\n", inject_file, injection_pid, injection_thread);
 
-    int injection_result = injector_start_app(drakvuf, injection_pid, injection_thread, inject_file, inject_cwd, injection_method, OUTPUT_DEFAULT, binary_path, target_process);
+    int injection_result = injector_start_app(
+                               drakvuf,
+                               injection_pid,
+                               injection_thread,
+                               inject_file,
+                               inject_cwd,
+                               injection_method,
+                               OUTPUT_DEFAULT,
+                               binary_path,
+                               target_process,
+                               false,
+                               NULL,
+                               injection_global_search);
 
     if (injection_result)
         printf("Process startup success\n");

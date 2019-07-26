@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2017 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -107,36 +107,18 @@
 
 #include <glib.h>
 #include "plugins/private.h"
-#include "plugins/plugins.h"
+#include "plugins/plugins_ex.h"
 
-class procmon: public plugin
+class procmon: public pluginex
 {
 public:
-    drakvuf_trap_t traps[2] =
-    {
-        [0 ... 1] = {
-            .breakpoint.lookup_type = LOOKUP_PID,
-            .breakpoint.pid = 4,
-            .breakpoint.addr_type = ADDR_RVA,
-            .breakpoint.module = "ntoskrnl.exe",
-            .type = BREAKPOINT,
-            .data = (void*)this
-        }
-    };
-
-    GSList* result_traps;
-
-    output_format_t format;
-
     addr_t command_line;
     addr_t image_path_name;
     addr_t dll_path;
     addr_t current_directory_handle;
     addr_t current_directory_dospath;
-    addr_t object_header_body;
 
-    procmon(drakvuf_t drakvuf, const void* config, output_format_t output);
-    ~procmon();
+    procmon(drakvuf_t drakvuf, output_format_t output);
 };
 
 #endif

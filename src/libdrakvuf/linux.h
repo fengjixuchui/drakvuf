@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2017 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -108,24 +108,24 @@
 #include <libvmi/libvmi.h>
 #include "libdrakvuf.h"
 
-addr_t linux_get_current_thread(drakvuf_t drakvuf, uint64_t vcpu_id);
+addr_t linux_get_current_thread(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
 
-addr_t linux_get_current_process(drakvuf_t drakvuf, uint64_t vcpu_id);
+addr_t linux_get_current_process(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
 
 char* linux_get_process_name(drakvuf_t drakvuf, addr_t process_base, bool fullpath);
 
-status_t linux_get_process_pid(drakvuf_t drakvuf, addr_t process_base, vmi_pid_t* pid);
+bool linux_get_process_pid(drakvuf_t drakvuf, addr_t process_base, vmi_pid_t* pid);
 
-char* linux_get_current_process_name(drakvuf_t drakvuf, uint64_t vcpu_id, bool fullpath);
+char* linux_get_current_process_name(drakvuf_t drakvuf, drakvuf_trap_info_t* info, bool fullpath);
 
 int64_t linux_get_process_userid(drakvuf_t drakvuf, addr_t process_base);
 
-int64_t linux_get_current_process_userid(drakvuf_t drakvuf, uint64_t vcpu_id);
+int64_t linux_get_current_process_userid(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
 
-bool linux_get_current_thread_id(drakvuf_t drakvuf, uint64_t vcpu_id, uint32_t* thread_id);
+bool linux_get_current_thread_id(drakvuf_t drakvuf, drakvuf_trap_info_t* info, uint32_t* thread_id);
 
-status_t linux_get_process_ppid( drakvuf_t drakvuf, addr_t process_base, vmi_pid_t* ppid );
+bool linux_get_process_ppid( drakvuf_t drakvuf, addr_t process_base, vmi_pid_t* ppid );
 
-bool linux_get_current_process_data( drakvuf_t drakvuf, uint64_t vcpu_id, proc_data_t* proc_data );
+bool linux_get_process_data( drakvuf_t drakvuf, addr_t process_base, proc_data_priv_t* proc_data );
 
 #endif
