@@ -637,8 +637,12 @@ static event_response_t terminate_process_hook_cb(drakvuf_t drakvuf, drakvuf_tra
     {
         for (auto& target : it.targets)
         {
-            PRINT_DEBUG("[MEMDUMP-USER] Erased trap for pid %d %s\n", info->proc_data.pid, target.target_name.c_str());
-            drakvuf_remove_trap(drakvuf, target.trap, NULL);
+            if (target.state == HOOK_OK)
+            {
+                PRINT_DEBUG("[MEMDUMP-USER] Erased trap for pid %d %s\n", info->proc_data.pid,
+                            target.target_name.c_str());
+                drakvuf_remove_trap(drakvuf, target.trap, NULL);
+            }
         }
     }
 
@@ -753,10 +757,13 @@ static event_response_t copy_on_write_handler(drakvuf_t drakvuf, drakvuf_trap_in
     {
         for (auto& hook : dll.targets)
         {
-            addr_t hook_addr = hook.trap->breakpoint.addr;
-            if (hook_addr >> 12 == pa >> 12)
+            if (hook.state == HOOK_OK)
             {
-                hooks.push_back(&hook);
+                addr_t hook_addr = hook.trap->breakpoint.addr;
+                if (hook_addr >> 12 == pa >> 12)
+                {
+                    hooks.push_back(&hook);
+                }
             }
         }
     }
