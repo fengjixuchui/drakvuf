@@ -106,7 +106,7 @@ bin_PROGRAMS = drakvuf xen_memclone injector
 
 SUBDIRS = xen_helper libdrakvuf libinjector plugins dirwatch
 
-drakvuf_SOURCES = main.cpp drakvuf.cpp
+drakvuf_SOURCES = main.cpp drakvuf.cpp drakvuf.h
 xen_memclone_SOURCES  = xen_memclone.c
 injector_SOURCES = injector.c
 
@@ -140,7 +140,7 @@ if DEBUG
 AM_CFLAGS += -DDRAKVUF_DEBUG -Werror -Wall -Wextra -g -ggdb3
 AM_CFLAGS += -Wno-missing-field-initializers
 AM_CXXFLAGS += -DDRAKVUF_DEBUG -Werror -Wall -Wextra -g -ggdb3
-AM_CXXFLAGS += -Wno-missing-field-initializers
+AM_CXXFLAGS += -Wno-missing-field-initializers -Wno-unknown-warning-option -Wno-c99-designator -ferror-limit=0
 if !HARDENING
 AM_CFLAGS += -pg
 AM_CXXFLAGS += -pg

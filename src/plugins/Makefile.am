@@ -108,94 +108,142 @@ sources =
 
 if PLUGIN_SYSCALLS
 sources += syscalls/syscalls.cpp
+sources += syscalls/syscalls.h
+sources += syscalls/commonscproto.h
+sources += syscalls/winscproto.h
+sources += syscalls/linuxscproto.h
 endif
 
 if PLUGIN_POOLMON
 sources += poolmon/poolmon.cpp
+sources += poolmon/poolmon.h
+sources += poolmon/private.h
 endif
 
 if PLUGIN_FILETRACER
-sources += filetracer/filetracer.cpp filetracer/win_acl.cpp
+sources += filetracer/filetracer.cpp
+sources += filetracer/filetracer.h
+sources += filetracer/private.h
+sources += filetracer/win_acl.cpp
+sources += filetracer/win_acl.h
 endif
 
 if PLUGIN_FILEDELETE
-sources += filedelete/filedelete.cpp filedelete/filedelete2_helpers.cpp
+sources += filedelete/filedelete.cpp
+sources += filedelete/filedelete.h
+sources += filedelete/private.h
+sources += filedelete/filedelete2_helpers.cpp
 endif
 
 if PLUGIN_OBJMON
 sources += objmon/objmon.cpp
+sources += objmon/objmon.h
 endif
 
 if PLUGIN_EXMON
 sources += exmon/exmon.cpp
+sources += exmon/exmon.h
+sources += exmon/private.h
 endif
 
 if PLUGIN_SSDTMON
 sources += ssdtmon/ssdtmon.cpp
+sources += ssdtmon/ssdtmon.h
+sources += ssdtmon/private.h
 endif
 
 if PLUGIN_DEBUGMON
 sources += debugmon/debugmon.cpp
+sources += debugmon/debugmon.h
+sources += debugmon/private.h
 endif
 
 if PLUGIN_DELAYMON
 sources += delaymon/delaymon.cpp
+sources += delaymon/delaymon.h
 endif
 
 if PLUGIN_CPUIDMON
 sources += cpuidmon/cpuidmon.cpp
+sources += cpuidmon/cpuidmon.h
+sources += cpuidmon/private.h
 endif
 
 if PLUGIN_SOCKETMON
 sources += socketmon/socketmon.cpp
+sources += socketmon/socketmon.h
+sources += socketmon/private.h
 endif
 
 if PLUGIN_REGMON
 sources += regmon/regmon.cpp
+sources += regmon/regmon.h
 endif
 
 if PLUGIN_PROCMON
-sources += procmon/procmon.cpp procmon/ntstatus.cpp procmon/winnt.cpp
+sources += procmon/procmon.cpp
+sources += procmon/procmon.h
+sources += procmon/ntstatus.cpp
+sources += procmon/winnt.cpp
+sources += procmon/winnt.h
+sources += procmon/ntstatus.h
 endif
 
 if PLUGIN_BSODMON
-sources += bsodmon/bsodmon.cpp bsodmon/bugcheck.cpp
+sources += bsodmon/bsodmon.cpp
+sources += bsodmon/bsodmon.h
+sources += bsodmon/private.h
+sources += bsodmon/bugcheck.cpp
+sources += bsodmon/bugcheck.h
 endif
 
 if PLUGIN_ENVMON
 sources += envmon/envmon.cpp
+sources += envmon/envmon.h
+sources += envmon/private.h
 endif
 
 if PLUGIN_CRASHMON
 sources += crashmon/crashmon.cpp
+sources += crashmon/crashmon.h
 endif
 
 if PLUGIN_CLIPBOARDMON
 sources += clipboardmon/clipboardmon.cpp
+sources += clipboardmon/clipboardmon.h
 endif
 
 if PLUGIN_WINDOWMON
 sources += windowmon/windowmon.cpp
+sources += windowmon/windowmon.h
 endif
 
 if PLUGIN_LIBRARYMON
 sources += librarymon/librarymon.cpp
+sources += librarymon/librarymon.h
 endif
 
 if PLUGIN_DKOMMON
 sources += dkommon/dkommon.cpp
+sources += dkommon/dkommon.h
 endif
 
 if PLUGIN_WMIMON
 sources += wmimon/wmimon.cpp
+sources += wmimon/wmimon.h
+sources += wmimon/private.h
 endif
 
 if PLUGIN_MEMDUMP
-sources += memdump/memdump.cpp memdump/userhook.cpp memdump/stack_util.cpp
+sources += memdump/memdump.cpp
+sources += memdump/memdump.h
+sources += memdump/private.h
+sources += memdump/userhook.cpp
+sources += memdump/stack_util.cpp
 endif
 
 ###############################################################################
-sources += plugins.cpp plugins.h plugins_ex.cpp plugins_ex.h plugin_utils.cpp plugin_utils.h
+sources += plugins.cpp plugins.h plugins_ex.cpp plugins_ex.h plugin_utils.cpp plugin_utils.h private.h
 
 AM_CPPFLAGS = -I$(top_srcdir) -I$(top_srcdir)/src -I$(srcdir)
 AM_CPPFLAGS += $(CPPFLAGS)
@@ -221,12 +269,12 @@ endif
 if DEBUG
 AM_CXXFLAGS += -DDRAKVUF_DEBUG -Werror -Wall -Wextra -g -ggdb3
 AM_CXXFLAGS += -Wno-missing-field-initializers -Wno-unused-parameter
-AM_CXXFLAGS += -Wno-initializer-overrides
+AM_CXXFLAGS += -Wno-initializer-overrides -Wno-unknown-warning-option
+AM_CXXFLAGS += -Wno-c99-designator -ferror-limit=0 -Wno-reorder-init-list
 AM_CXXFLAGS += -Wcast-qual -Wcast-align -Wstrict-aliasing \
                -Wpointer-arith -Winit-self -Wshadow \
-               -Wstrict-prototypes \
-               -Wmissing-prototypes -Wredundant-decls \
-               -Wfloat-equal -Wundef -Wvla
+               -Wredundant-decls -Wfloat-equal -Wundef \
+               -Wvla
 # Note that -pg is incompatible with HARDENING
 if !HARDENING
 AM_CXXFLAGS += -pg
