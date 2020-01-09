@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
 *                                                                         *
-* DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
+* DRAKVUF (C) 2014-2020 Tamas K Lengyel.                                  *
 * Tamas K Lengyel is hereinafter referred to as the author.               *
 * This program is free software; you may redistribute and/or modify it    *
 * under the terms of the GNU General Public License as published by the   *
@@ -229,5 +229,13 @@ enum flags_types_format
 
 //     WNNC_CRED_MANAGER    = 0xFFFF0000,
 // };
+
+enum define_dos_device_flag
+{
+    DDD_RAW_TARGET_PATH       = 0x1,
+    DDD_REMOVE_DEFINITION     = 0x2,
+    DDD_EXACT_MATCH_ON_REMOVE = 0x3,
+    DDD_NO_BROADCAST_SYSTEM   = 0x4
+};
 
 #endif

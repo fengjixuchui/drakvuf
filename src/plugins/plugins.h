@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2020 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -130,6 +130,7 @@ struct plugins_options
     const char* ntdll_profile;          // PLUGIN_LIBRARYMON
     const char* ole32_profile;          // PLUGIN_WMIMON
     const char* wow_ole32_profile;      // PLUGIN_WMIMON
+    const char* combase_profile;        // PLUGIN_WMIMON
     const char* memdump_dir;            // PLUGIN_MEMDUMP
     const char* dll_hooks_list;         // PLUGIN_MEMDUMP
 };

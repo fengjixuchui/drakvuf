@@ -1,6 +1,6 @@
 #********************IMPORTANT DRAKVUF LICENSE TERMS**********************#
 #                                                                         #
-# DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  #
+# DRAKVUF (C) 2014-2020 Tamas K Lengyel.                                  #
 # Tamas K Lengyel is hereinafter referred to as the author.               #
 # This program is free software; you may redistribute and/or modify it    #
 # under the terms of the GNU General Public License as published by the   #
@@ -187,6 +187,8 @@ sources += procmon/ntstatus.cpp
 sources += procmon/winnt.cpp
 sources += procmon/winnt.h
 sources += procmon/ntstatus.h
+sources += procmon/privileges.cpp
+sources += procmon/privileges.h
 endif
 
 if PLUGIN_BSODMON

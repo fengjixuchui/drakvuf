@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2020 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -128,7 +128,7 @@ using flags_str_t = std::map<uint64_t, std::string>;
  * Return a string of all known set flags. Return empty otherwise.
  */
 std::string parse_flags(uint64_t flags,
-                        flags_str_t flags_map,
+                        const flags_str_t& flags_map,
                         output_format_t format = OUTPUT_DEFAULT,
                         std::string empty = std::string());
 

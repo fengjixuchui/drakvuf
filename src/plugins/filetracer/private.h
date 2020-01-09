@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2020 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -323,6 +323,6 @@ extern const flags_str_t generic_ar;
 
 using std::string;
 
-string objattr_read(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t attrs);
+string objattr_read(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t attrs, uint32_t handle = 0);
 
 #endif

@@ -102,139 +102,71 @@
  *                                                                         *
  ***************************************************************************/
 
-#include <config.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/prctl.h>
-#include <sys/stat.h>
-#include <fcntl.h>
+#ifndef PRIVILEGE_H
+#define PRIVILEGE_H
+
 #include <inttypes.h>
-#include <dirent.h>
-#include <glib.h>
-#include <err.h>
+#include <string>
 
-#include <libvmi/libvmi.h>
-#include "objmon.h"
-
-/*
- NTKERNELAPI
- NTSTATUS
- ObCreateObject (
- IN KPROCESSOR_MODE ObjectAttributesAccessMode OPTIONAL,
- IN POBJECT_TYPE ObjectType,
- IN POBJECT_ATTRIBUTES ObjectAttributes OPTIONAL,
- IN KPROCESSOR_MODE AccessMode,
- IN PVOID Reserved,
- IN ULONG ObjectSizeToAllocate,
- IN ULONG PagedPoolCharge OPTIONAL,
- IN ULONG NonPagedPoolCharge OPTIONAL,
- OUT PVOID *Object
- );
- */
-
-struct ckey
+enum privilege_attributes
 {
-    union
-    {
-        uint32_t key;
-        char _key[4];
-    };
+    SE_PRIVILEGE_DISABLED           = 0x00000000L,
+    SE_PRIVILEGE_ENABLED_BY_DEFAULT = 0x00000001L,
+    SE_PRIVILEGE_ENABLED            = 0x00000002L,
+    SE_PRIVILEGE_REMOVED            = 0x00000004L,
+    SE_PRIVILEGE_USED_FOR_ACCESS    = 0x80000000L,
 };
 
-static event_response_t cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
+enum privileges
 {
+    SE_CREATE_TOKEN_PRIVILEGE           = 2L,
+    SE_ASSIGNPRIMARYTOKEN_PRIVILEGE     = 3L,
+    SE_LOCK_MEMORY_PRIVILEGE            = 4L,
+    SE_INCREASE_QUOTA_PRIVILEGE         = 5L,
+    SE_MACHINE_ACCOUNT_PRIVILEGE        = 6L,
+    SE_TCB_PRIVILEGE                    = 7L,
+    SE_SECURITY_PRIVILEGE               = 8L,
+    SE_TAKE_OWNERSHIP_PRIVILEGE         = 9L,
+    SE_LOAD_DRIVER_PRIVILEGE            = 10L,
+    SE_SYSTEM_PROFILE_PRIVILEGE         = 11L,
+    SE_SYSTEMTIME_PRIVILEGE             = 12L,
+    SE_PROF_SINGLE_PROCESS_PRIVILEGE    = 13L,
+    SE_INC_BASE_PRIORITY_PRIVILEGE      = 14L,
+    SE_CREATE_PAGEFILE_PRIVILEGE        = 15L,
+    SE_CREATE_PERMANENT_PRIVILEGE       = 16L,
+    SE_BACKUP_PRIVILEGE                 = 17L,
+    SE_RESTORE_PRIVILEGE                = 18L,
+    SE_SHUTDOWN_PRIVILEGE               = 19L,
+    SE_DEBUG_PRIVILEGE                  = 20L,
+    SE_AUDIT_PRIVILEGE                  = 21L,
+    SE_SYSTEM_ENVIRONMENT_PRIVILEGE     = 22L,
+    SE_CHANGE_NOTIFY_PRIVILEGE          = 23L,
+    SE_REMOTE_SHUTDOWN_PRIVILEGE        = 24L,
+    SE_UNDOCK_PRIVILEGE                 = 25L,
+    SE_SYNC_AGENT_PRIVILEGE             = 26L,
+    SE_ENABLE_DELEGATION_PRIVILEGE      = 27L,
+    SE_MANAGE_VOLUME_PRIVILEGE          = 28L,
+    SE_IMPERSONATE_PRIVILEGE            = 29L,
+    SE_CREATE_GLOBAL_PRIVILEGE          = 30L,
+    SE_TRUSTED_CREDMAN_ACCESS_PRIVILEGE = 31L,
+    SE_RELABEL_PRIVILEGE                = 32L,
+    SE_INC_WORKING_SET_PRIVILEGE        = 33L,
+    SE_TIME_ZONE_PRIVILEGE              = 34L,
+    SE_CREATE_SYMBOLIC_LINK_PRIVILEGE   = 35L,
+};
 
-    objmon* o = (objmon*)info->trap->data;
-    vmi_instance_t vmi = drakvuf_lock_and_get_vmi(drakvuf);
-    struct ckey ckey = {};
-
-    gchar* escaped_pname = NULL;
-    access_context_t ctx;
-    memset(&ctx, 0, sizeof(access_context_t));
-    ctx.translate_mechanism = VMI_TM_PROCESS_DTB;
-    ctx.dtb = info->regs->cr3;
-
-    if ( o->pm == VMI_PM_IA32E )
-    {
-        ctx.addr = info->regs->rdx;
-    }
-    else
-    {
-        ctx.addr = info->regs->rsp + sizeof(uint32_t)*2;
-        vmi_read_32(vmi, &ctx, (uint32_t*)&ctx.addr);
-    }
-
-    ctx.addr += o->key_offset;
-
-    vmi_read_32(vmi, &ctx, &ckey.key);
-
-    switch (o->format)
-    {
-        case OUTPUT_CSV:
-            printf("objmon," FORMAT_TIMEVAL ",%" PRIu32 ",0x%" PRIx64 ",\"%s\",%" PRIi64 ",%c%c%c%c",
-                   UNPACK_TIMEVAL(info->timestamp), info->vcpu, info->regs->cr3, info->proc_data.name, info->proc_data.userid,
-                   ckey._key[0], ckey._key[1], ckey._key[2], ckey._key[3]);
-            break;
-
-        case OUTPUT_KV:
-            printf("objmon Time=" FORMAT_TIMEVAL ",PID=%d,PPID=%d,ProcessName=\"%s\",Key=\"%c%c%c%c\"",
-                   UNPACK_TIMEVAL(info->timestamp), info->proc_data.pid, info->proc_data.ppid, info->proc_data.name,
-                   ckey._key[0], ckey._key[1], ckey._key[2], ckey._key[3]);
-            break;
-
-        case OUTPUT_JSON:
-            escaped_pname = drakvuf_escape_str(info->proc_data.name);
-            printf( "{"
-                    "\"Plugin\" : \"objmon\","
-                    "\"TimeStamp\" :" "\"" FORMAT_TIMEVAL "\","
-                    "\"ProcessName\": %s,"
-                    "\"UserId\": %" PRIu64 ","
-                    "\"PID\" : %d,"
-                    "\"PPID\": %d,"
-                    "\"Key\" : \"%c%c%c%c\""
-                    "}", // EOL below
-                    UNPACK_TIMEVAL(info->timestamp),
-                    escaped_pname,
-                    info->proc_data.userid,
-                    info->proc_data.pid, info->proc_data.ppid,
-                    ckey._key[0], ckey._key[1], ckey._key[2], ckey._key[3]);
-            g_free(escaped_pname);
-            break;
-
-        default:
-        case OUTPUT_DEFAULT:
-            printf("[OBJMON] TIME:" FORMAT_TIMEVAL " VCPU:%" PRIu32 " CR3:0x%" PRIx64 ",\"%s\" %s:%" PRIi64" '%c%c%c%c'",
-                   UNPACK_TIMEVAL(info->timestamp), info->vcpu, info->regs->cr3, info->proc_data.name,
-                   USERIDSTR(drakvuf), info->proc_data.userid,
-                   ckey._key[0], ckey._key[1], ckey._key[2], ckey._key[3]);
-            break;
-    }
-
-    printf("\n");
-
-    drakvuf_release_vmi(drakvuf);
-    return 0;
-}
-
-/* ----------------------------------------------------- */
-
-objmon::objmon(drakvuf_t drakvuf, output_format_t output)
+struct LUID_AND_ATTRIBUTES
 {
-    if ( !drakvuf_get_kernel_symbol_rva(drakvuf, "ObCreateObject", &this->trap.breakpoint.rva) )
-        throw -1;
-    if ( !drakvuf_get_kernel_struct_member_rva(drakvuf, "_OBJECT_TYPE", "Key", &this->key_offset) )
-        throw -1;
+    uint64_t luid;
+    uint32_t attributes;
+} __attribute__((packed));
 
-    this->trap.cb = cb;
-    this->pm = drakvuf_get_page_mode(drakvuf);
+struct TOKEN_PRIVILEGES
+{
+    uint32_t privilege_count;
+    struct LUID_AND_ATTRIBUTES privileges[1];
+} __attribute__((packed));
 
-    this->format = output;
-    if ( !drakvuf_add_trap(drakvuf, &this->trap) )
-        throw -1;
-}
+std::string stringify_privilege(struct LUID_AND_ATTRIBUTES& privilege);
 
-objmon::~objmon() {}
+#endif

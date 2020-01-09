@@ -102,139 +102,112 @@
  *                                                                         *
  ***************************************************************************/
 
-#include <config.h>
+#include "privileges.h"
 #include <stdio.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/prctl.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <inttypes.h>
-#include <dirent.h>
-#include <glib.h>
-#include <err.h>
 
-#include <libvmi/libvmi.h>
-#include "objmon.h"
-
-/*
- NTKERNELAPI
- NTSTATUS
- ObCreateObject (
- IN KPROCESSOR_MODE ObjectAttributesAccessMode OPTIONAL,
- IN POBJECT_TYPE ObjectType,
- IN POBJECT_ATTRIBUTES ObjectAttributes OPTIONAL,
- IN KPROCESSOR_MODE AccessMode,
- IN PVOID Reserved,
- IN ULONG ObjectSizeToAllocate,
- IN ULONG PagedPoolCharge OPTIONAL,
- IN ULONG NonPagedPoolCharge OPTIONAL,
- OUT PVOID *Object
- );
- */
-
-struct ckey
+std::string stringify_privilege(struct LUID_AND_ATTRIBUTES& privilege)
 {
-    union
+    std::string attribute;
+    switch (privilege.attributes)
     {
-        uint32_t key;
-        char _key[4];
-    };
-};
-
-static event_response_t cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
-{
-
-    objmon* o = (objmon*)info->trap->data;
-    vmi_instance_t vmi = drakvuf_lock_and_get_vmi(drakvuf);
-    struct ckey ckey = {};
-
-    gchar* escaped_pname = NULL;
-    access_context_t ctx;
-    memset(&ctx, 0, sizeof(access_context_t));
-    ctx.translate_mechanism = VMI_TM_PROCESS_DTB;
-    ctx.dtb = info->regs->cr3;
-
-    if ( o->pm == VMI_PM_IA32E )
-    {
-        ctx.addr = info->regs->rdx;
-    }
-    else
-    {
-        ctx.addr = info->regs->rsp + sizeof(uint32_t)*2;
-        vmi_read_32(vmi, &ctx, (uint32_t*)&ctx.addr);
-    }
-
-    ctx.addr += o->key_offset;
-
-    vmi_read_32(vmi, &ctx, &ckey.key);
-
-    switch (o->format)
-    {
-        case OUTPUT_CSV:
-            printf("objmon," FORMAT_TIMEVAL ",%" PRIu32 ",0x%" PRIx64 ",\"%s\",%" PRIi64 ",%c%c%c%c",
-                   UNPACK_TIMEVAL(info->timestamp), info->vcpu, info->regs->cr3, info->proc_data.name, info->proc_data.userid,
-                   ckey._key[0], ckey._key[1], ckey._key[2], ckey._key[3]);
+        case SE_PRIVILEGE_DISABLED:
+            attribute = "SE_PRIVILEGE_DISABLED";
             break;
-
-        case OUTPUT_KV:
-            printf("objmon Time=" FORMAT_TIMEVAL ",PID=%d,PPID=%d,ProcessName=\"%s\",Key=\"%c%c%c%c\"",
-                   UNPACK_TIMEVAL(info->timestamp), info->proc_data.pid, info->proc_data.ppid, info->proc_data.name,
-                   ckey._key[0], ckey._key[1], ckey._key[2], ckey._key[3]);
+        case SE_PRIVILEGE_ENABLED_BY_DEFAULT:
+            attribute = "SE_PRIVILEGE_ENABLED_BY_DEFAULT";
             break;
-
-        case OUTPUT_JSON:
-            escaped_pname = drakvuf_escape_str(info->proc_data.name);
-            printf( "{"
-                    "\"Plugin\" : \"objmon\","
-                    "\"TimeStamp\" :" "\"" FORMAT_TIMEVAL "\","
-                    "\"ProcessName\": %s,"
-                    "\"UserId\": %" PRIu64 ","
-                    "\"PID\" : %d,"
-                    "\"PPID\": %d,"
-                    "\"Key\" : \"%c%c%c%c\""
-                    "}", // EOL below
-                    UNPACK_TIMEVAL(info->timestamp),
-                    escaped_pname,
-                    info->proc_data.userid,
-                    info->proc_data.pid, info->proc_data.ppid,
-                    ckey._key[0], ckey._key[1], ckey._key[2], ckey._key[3]);
-            g_free(escaped_pname);
+        case SE_PRIVILEGE_ENABLED:
+            attribute = "SE_PRIVILEGE_ENABLED";
             break;
-
+        case SE_PRIVILEGE_REMOVED:
+            attribute = "SE_PRIVILEGE_REMOVED";
+            break;
+        case SE_PRIVILEGE_USED_FOR_ACCESS:
+            attribute = "SE_PRIVILEGE_USED_FOR_ACCESS";
+            break;
         default:
-        case OUTPUT_DEFAULT:
-            printf("[OBJMON] TIME:" FORMAT_TIMEVAL " VCPU:%" PRIu32 " CR3:0x%" PRIx64 ",\"%s\" %s:%" PRIi64" '%c%c%c%c'",
-                   UNPACK_TIMEVAL(info->timestamp), info->vcpu, info->regs->cr3, info->proc_data.name,
-                   USERIDSTR(drakvuf), info->proc_data.userid,
-                   ckey._key[0], ckey._key[1], ckey._key[2], ckey._key[3]);
-            break;
+        {
+            char tmp[32] = {0};
+            snprintf(tmp, 32, "0x%" PRIx32, privilege.attributes);
+            attribute = tmp;
+        }
     }
 
-    printf("\n");
-
-    drakvuf_release_vmi(drakvuf);
-    return 0;
+    switch (privilege.luid)
+    {
+        case SE_CREATE_TOKEN_PRIVILEGE:
+            return std::string("SE_CREATE_TOKEN_PRIVILEGE") + std::string("=") + attribute;
+        case SE_ASSIGNPRIMARYTOKEN_PRIVILEGE:
+            return std::string("SE_ASSIGNPRIMARYTOKEN_PRIVILEGE") + std::string("=") + attribute;
+        case SE_LOCK_MEMORY_PRIVILEGE:
+            return std::string("SE_LOCK_MEMORY_PRIVILEGE") + std::string("=") + attribute;
+        case SE_INCREASE_QUOTA_PRIVILEGE:
+            return std::string("SE_INCREASE_QUOTA_PRIVILEGE") + std::string("=") + attribute;
+        case SE_MACHINE_ACCOUNT_PRIVILEGE:
+            return std::string("SE_MACHINE_ACCOUNT_PRIVILEGE") + std::string("=") + attribute;
+        case SE_TCB_PRIVILEGE:
+            return std::string("SE_TCB_PRIVILEGE") + std::string("=") + attribute;
+        case SE_SECURITY_PRIVILEGE:
+            return std::string("SE_SECURITY_PRIVILEGE") + std::string("=") + attribute;
+        case SE_TAKE_OWNERSHIP_PRIVILEGE:
+            return std::string("SE_TAKE_OWNERSHIP_PRIVILEGE") + std::string("=") + attribute;
+        case SE_LOAD_DRIVER_PRIVILEGE:
+            return std::string("SE_LOAD_DRIVER_PRIVILEGE") + std::string("=") + attribute;
+        case SE_SYSTEM_PROFILE_PRIVILEGE:
+            return std::string("SE_SYSTEM_PROFILE_PRIVILEGE") + std::string("=") + attribute;
+        case SE_SYSTEMTIME_PRIVILEGE:
+            return std::string("SE_SYSTEMTIME_PRIVILEGE") + std::string("=") + attribute;
+        case SE_PROF_SINGLE_PROCESS_PRIVILEGE:
+            return std::string("SE_PROF_SINGLE_PROCESS_PRIVILEGE") + std::string("=") + attribute;
+        case SE_INC_BASE_PRIORITY_PRIVILEGE:
+            return std::string("SE_INC_BASE_PRIORITY_PRIVILEGE") + std::string("=") + attribute;
+        case SE_CREATE_PAGEFILE_PRIVILEGE:
+            return std::string("SE_CREATE_PAGEFILE_PRIVILEGE") + std::string("=") + attribute;
+        case SE_CREATE_PERMANENT_PRIVILEGE:
+            return std::string("SE_CREATE_PERMANENT_PRIVILEGE") + std::string("=") + attribute;
+        case SE_BACKUP_PRIVILEGE:
+            return std::string("SE_BACKUP_PRIVILEGE") + std::string("=") + attribute;
+        case SE_RESTORE_PRIVILEGE:
+            return std::string("SE_RESTORE_PRIVILEGE") + std::string("=") + attribute;
+        case SE_SHUTDOWN_PRIVILEGE:
+            return std::string("SE_SHUTDOWN_PRIVILEGE") + std::string("=") + attribute;
+        case SE_DEBUG_PRIVILEGE:
+            return std::string("SE_DEBUG_PRIVILEGE") + std::string("=") + attribute;
+        case SE_AUDIT_PRIVILEGE:
+            return std::string("SE_AUDIT_PRIVILEGE") + std::string("=") + attribute;
+        case SE_SYSTEM_ENVIRONMENT_PRIVILEGE:
+            return std::string("SE_SYSTEM_ENVIRONMENT_PRIVILEGE") + std::string("=") + attribute;
+        case SE_CHANGE_NOTIFY_PRIVILEGE:
+            return std::string("SE_CHANGE_NOTIFY_PRIVILEGE") + std::string("=") + attribute;
+        case SE_REMOTE_SHUTDOWN_PRIVILEGE:
+            return std::string("SE_REMOTE_SHUTDOWN_PRIVILEGE") + std::string("=") + attribute;
+        case SE_UNDOCK_PRIVILEGE:
+            return std::string("SE_UNDOCK_PRIVILEGE") + std::string("=") + attribute;
+        case SE_SYNC_AGENT_PRIVILEGE:
+            return std::string("SE_SYNC_AGENT_PRIVILEGE") + std::string("=") + attribute;
+        case SE_ENABLE_DELEGATION_PRIVILEGE:
+            return std::string("SE_ENABLE_DELEGATION_PRIVILEGE") + std::string("=") + attribute;
+        case SE_MANAGE_VOLUME_PRIVILEGE:
+            return std::string("SE_MANAGE_VOLUME_PRIVILEGE") + std::string("=") + attribute;
+        case SE_IMPERSONATE_PRIVILEGE:
+            return std::string("SE_IMPERSONATE_PRIVILEGE") + std::string("=") + attribute;
+        case SE_CREATE_GLOBAL_PRIVILEGE:
+            return std::string("SE_CREATE_GLOBAL_PRIVILEGE") + std::string("=") + attribute;
+        case SE_TRUSTED_CREDMAN_ACCESS_PRIVILEGE:
+            return std::string("SE_TRUSTED_CREDMAN_ACCESS_PRIVILEGE") + std::string("=") + attribute;
+        case SE_RELABEL_PRIVILEGE:
+            return std::string("SE_RELABEL_PRIVILEGE") + std::string("=") + attribute;
+        case SE_INC_WORKING_SET_PRIVILEGE:
+            return std::string("SE_INC_WORKING_SET_PRIVILEGE") + std::string("=") + attribute;
+        case SE_TIME_ZONE_PRIVILEGE:
+            return std::string("SE_TIME_ZONE_PRIVILEGE") + std::string("=") + attribute;
+        case SE_CREATE_SYMBOLIC_LINK_PRIVILEGE:
+            return std::string("SE_CREATE_SYMBOLIC_LINK_PRIVILEGE") + std::string("=") + attribute;
+        default:
+        {
+            char tmp[64] = {0};
+            snprintf(tmp, 64, "0x%" PRIx64, privilege.luid);
+            return std::string(tmp) + std::string("=") + attribute;
+        }
+    }
 }
-
-/* ----------------------------------------------------- */
-
-objmon::objmon(drakvuf_t drakvuf, output_format_t output)
-{
-    if ( !drakvuf_get_kernel_symbol_rva(drakvuf, "ObCreateObject", &this->trap.breakpoint.rva) )
-        throw -1;
-    if ( !drakvuf_get_kernel_struct_member_rva(drakvuf, "_OBJECT_TYPE", "Key", &this->key_offset) )
-        throw -1;
-
-    this->trap.cb = cb;
-    this->pm = drakvuf_get_page_mode(drakvuf);
-
-    this->format = output;
-    if ( !drakvuf_add_trap(drakvuf, &this->trap) )
-        throw -1;
-}
-
-objmon::~objmon() {}

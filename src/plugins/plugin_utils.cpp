@@ -1,6 +1,6 @@
 /*********************IMPORTANT DRAKVUF LICENSE TERMS***********************
  *                                                                         *
- * DRAKVUF (C) 2014-2019 Tamas K Lengyel.                                  *
+ * DRAKVUF (C) 2014-2020 Tamas K Lengyel.                                  *
  * Tamas K Lengyel is hereinafter referred to as the author.               *
  * This program is free software; you may redistribute and/or modify it    *
  * under the terms of the GNU General Public License as published by the   *
@@ -159,11 +159,11 @@ static std::string format_flag(string flag, output_format_t format)
     return flag + " | ";
 }
 
-std::string parse_flags(uint64_t flags, flags_str_t flags_map, output_format_t format, std::string empty)
+std::string parse_flags(uint64_t flags, const flags_str_t& flags_map, output_format_t format, std::string empty)
 {
     string output;
 
-    for (const auto flag: flags_map)
+    for (const auto &flag: flags_map)
         if ((flag.first & flags) == flag.first)
             output += format_flag(flag.second, format);
 
