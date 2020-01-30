@@ -102,224 +102,87 @@
  *                                                                         *
  ***************************************************************************/
 
-#ifndef SOCKETMON_PRIVATE_H
-#define SOCKETMON_PRIVATE_H
+#include <config.h>
+#include <glib.h>
+#include <inttypes.h>
+#include <libvmi/libvmi.h>
+#include <libvmi/peparse.h>
+#include <libdrakvuf/private.h>
+#include <assert.h>
+#include <map>
+#include <string>
+#include <iomanip>
 
-/*
- * Socketmon installs some traps on CR3 switches to ensure
- * that traps get registered properly. This sets an upper bound.
- * before bailing.
- */
-#define CR3_COUNT_BEFORE_BAIL 1000
+#include "crypto.h"
 
-/* TcpE */
-enum tcp_state
+static std::string make_hex_string(uint8_t* data, size_t len)
 {
-    CLOSED = 0,
-    LISTENING = 1,
-    SYN_SENT = 2,
-    SYN_RCVD = 3,
-    ESTABLISHED = 4,
-    FIN_WAIT1 = 5,
-    FIN_WAIT2 = 6,
-    CLOSE_WAIT = 7,
-    CLOSING = 8,
-    LIST_ACK = 9,
-    TIME_WAIT = 12,
-    DELETE_TCB = 13,
-    __TCP_STATE_MAX
-};
+    std::ostringstream ss;
+    ss << std::hex << std::setfill('0');
+    for (size_t i = 0; i < len; i++)
+    {
+        ss << std::setw(2) << static_cast<int>(data[i]);
+    }
+    return ss.str();
+}
 
-static const char* tcp_state_str[] =
+// TODO: only works for 32 bits, we should implement 64-bit version in future
+std::map < std::string, std::string > CryptGenKey_hook(drakvuf_t drakvuf, drakvuf_trap_info* info, std::vector <uint64_t> arguments)
 {
-    [CLOSED] = "closed",
-    [LISTENING] = "listening",
-    [SYN_SENT] = "syn_sent",
-    [SYN_RCVD] = "syn_rcvd",
-    [ESTABLISHED] = "established",
-    [FIN_WAIT1] = "fin_wait1",
-    [FIN_WAIT2] = "fin_wait2",
-    [CLOSE_WAIT] = "close_wait",
-    [CLOSING] = "closing",
-    [LIST_ACK] = "list_ack",
-    [TIME_WAIT] = "time_wait",
-    [DELETE_TCB] = "delete_tcb",
-    [10 ... 11] = "__undefined__"
-};
+	std::map < std::string, std::string > ret;
 
-struct tcp_endpoint_x86
-{
-    uint64_t createtime;
-    uint32_t _pad1;
-    uint32_t inetaf;
-    uint32_t addrinfo;
-    uint32_t listentry;
-    uint8_t _pad2[0x1c];
-    uint32_t state;
-    uint16_t localport;
-    uint16_t remoteport;
-    uint8_t _pad3[0x138];
-    uint32_t owner;
-} __attribute__ ((packed));
+    if (!drakvuf_is_wow64(drakvuf, info))
+    {
+        PRINT_DEBUG("CryptGenKey hook not supported for 64-bit process\n");
+        return ret;
+    }
+    addr_t hKey_addr = 0;
+    HCRYPTKEY_s *hKey = new HCRYPTKEY_s;
+    magic_s *magic = new magic_s;
+    key_data_s *key_data = new key_data_s;
+    uint8_t *key_bytes;
+    auto vmi = drakvuf_lock_and_get_vmi(drakvuf);
 
-struct tcp_endpoint_x64
-{
-    uint8_t _pad1[0x18];
-    uint64_t inetaf;
-    uint64_t addrinfo;
-    uint64_t listentry;
-    uint8_t _pad2[0x38];
-    uint32_t state;
-    uint16_t localport;
-    uint16_t remoteport;
-    uint8_t _pad3[0x1c8];
-    uint64_t owner;
-} __attribute__ ((packed));
+    if (VMI_SUCCESS != vmi_read_32_va(vmi, arguments[3], info->proc_data.pid, (uint32_t*)&hKey_addr))
+    {
+        drakvuf_release_vmi(drakvuf);
+        goto end;
+    }
 
-// Tested for Windows 8.1
-struct tcp_endpoint_win81_x64
-{
-    addr_t _pad1[2];      // +0x0
-    addr_t inetaf;        // +0x10 -> inetaf_win10_x64
-    addr_t addrinfo;      // +0x18
-    uint8_t _pad2[0x4c];  // +0x20
-    uint32_t state;       // +0x6c
-    uint16_t localport;   // +0x70
-    uint16_t remoteport;  // +0x72
-    uint8_t _pad3[0x1e4]; // +0x74
-    addr_t owner;         // +0x258
-} __attribute__((packed));
+    if (VMI_SUCCESS != vmi_read_va(vmi, hKey_addr, info->proc_data.pid, sizeof(HCRYPTKEY_s), hKey, NULL))
+    {
+        drakvuf_release_vmi(drakvuf);
+        goto end;
+    }
 
-// That worked with Windows 10 before 1803
-struct tcp_endpoint_win10_x64
-{
-    addr_t _pad1[2];
-    addr_t inetaf; // inetaf_win10_x64
-    addr_t addrinfo;
-    uint8_t _pad2[0x4c];
-    uint32_t state;
-    uint16_t localport;
-    uint16_t remoteport;
-    uint8_t _pad3[0x1E4];
-    addr_t owner;
-    addr_t _pad4;
-    addr_t createtime;
-} __attribute__((packed));
+    hKey->magic ^= MAGIC_PTR_XOR_VALUE;
+    if (VMI_SUCCESS != vmi_read_va(vmi, hKey->magic, info->proc_data.pid, sizeof(magic_s), magic, NULL))
+    {
+        drakvuf_release_vmi(drakvuf);
+        goto end;
+    }
 
-// Tested for Windows 10 build 1803
-struct tcp_endpoint_win10_x64_1803
-{
-    addr_t _pad1[2];      // +0x0
-    addr_t inetaf;        // +0x10 -> inetaf_win10_x64
-    addr_t addrinfo;      // +0x18
-    uint8_t _pad2[0x4c];  // +0x20
-    uint32_t state;       // +0x6c
-    uint16_t localport;   // +0x70
-    uint16_t remoteport;  // +0x72
-    uint8_t _pad3[0x204]; // +0x74
-    addr_t owner;         // +0x278
-} __attribute__((packed));
+    if (VMI_SUCCESS != vmi_read_va(vmi, magic->key_data, info->proc_data.pid, sizeof(key_data_s), key_data, NULL))
+    {
+        drakvuf_release_vmi(drakvuf);
+        goto end;
+    }
 
-struct addr_info_x86
-{
-    uint32_t local; // local_address
-    uint32_t _pad;
-    uint32_t remote; // ipv4/ipv6
-} __attribute__ ((packed));
+    key_bytes = new uint8_t[key_data->key_size];
 
-struct addr_info_x64
-{
-    uint64_t local;
-    uint64_t _pad;
-    uint64_t remote;
-} __attribute__ ((packed));
+    if (VMI_SUCCESS != vmi_read_va(vmi, key_data->key_bytes, info->proc_data.pid, key_data->key_size, key_bytes, NULL))
+    {
+        drakvuf_release_vmi(drakvuf);
+        goto end;
+    }
 
-struct local_address_x86
-{
-    uint8_t _pad[0xc];
-    uint32_t pdata;
-} __attribute__ ((packed));
+    drakvuf_release_vmi(drakvuf);
 
-struct local_address_x64
-{
-    uint8_t _pad[0x10];
-    uint64_t pdata;
-} __attribute__ ((packed));
+    ret[EXTRA_GENERATED_KEY] = make_hex_string(key_bytes, key_data->key_size);
 
-struct local_address_win10_udp_x64
-{
-    addr_t pdata;
-} __attribute__((packed));
-
-#define AF_INET     0x2
-#define AF_INET6    0x17
-
-struct inetaf_x86
-{
-    uint8_t _pad[0xc];
-    uint8_t addressfamily;
-} __attribute__ ((packed));
-
-struct inetaf_x64
-{
-    uint8_t _pad[0x14];
-    uint8_t addressfamily;
-} __attribute__ ((packed));
-
-struct inetaf_win81_x64
-{
-    uint8_t _pad[0x18];
-    uint8_t addressfamily;
-} __attribute__ ((packed));
-
-using inetaf_win10_x64 = inetaf_win81_x64;
-
-/* UdpA */
-struct udp_endpoint_x86
-{
-    uint8_t _pad1[0x14];
-    uint32_t inetaf;
-    uint32_t owner;
-    uint8_t _pad2[0x14];
-    uint64_t createtime;
-    uint32_t localaddr;
-    uint8_t _pad3[0xc];
-    uint16_t port;
-} __attribute__ ((packed));
-
-struct udp_endpoint_x64
-{
-    uint8_t _pad1[0x20];
-    uint64_t inetaf;
-    uint64_t owner;
-    uint8_t _pad2[0x28];
-    uint64_t createtime;
-    uint64_t localaddr;
-    uint8_t _pad3[0x18];
-    uint16_t port;
-} __attribute__ ((packed));
-
-struct udp_endpoint_win10_x64
-{
-    addr_t _pad1[4];
-    addr_t inetaf; // inetaf_win10_x64
-    addr_t owner;
-    addr_t _pad2[5];
-    addr_t createtime;
-    uint8_t _pad3[0x18];
-    uint16_t port;
-    addr_t localaddr; // local_address_win10_udp_x64
-} __attribute__ ((packed));
-
-// This is yet another type of Windows string representation
-// specific for undocumented DnsQueryExW(...) function.
-// Same type for 64 and 32 bit versions.
-struct dns_query_ex_w_string_t
-{
-    uint32_t length = 0;
-    uint32_t unknown = 0; // maybe type of bytes in string, was equal to 1 in my case of wchars?
-    uint64_t pBuffer = 0; // pointer to a null-terminated string of wchars
-    //uint64_t unknown2 = 0; // maybe type of bytes in string, was equal to 1 in my case of wchars, commented out, since not needed yet
-};
-
-#endif
+    end:
+    delete hKey;
+    delete magic;
+    delete key_data;
+    return ret;
+}

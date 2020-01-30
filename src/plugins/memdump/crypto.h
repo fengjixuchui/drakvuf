@@ -102,224 +102,60 @@
  *                                                                         *
  ***************************************************************************/
 
-#ifndef SOCKETMON_PRIVATE_H
-#define SOCKETMON_PRIVATE_H
+#ifndef DRAKMON_CRYPTO_H
+#define DRAKMON_CRYPTO_H
 
-/*
- * Socketmon installs some traps on CR3 switches to ensure
- * that traps get registered properly. This sets an upper bound.
- * before bailing.
- */
-#define CR3_COUNT_BEFORE_BAIL 1000
+#include <fstream>
+#include <sstream>
 
-/* TcpE */
-enum tcp_state
+#include <config.h>
+#include <glib.h>
+#include <inttypes.h>
+#include <libvmi/libvmi.h>
+#include <libvmi/peparse.h>
+#include <libdrakvuf/private.h>
+#include <assert.h>
+#include <vector>
+#include <map>
+#include <string>
+
+// Magic value found in rsaenh.dll
+// some internal pointers are xored with this mask
+#define MAGIC_PTR_XOR_VALUE 0xE35A172C
+
+std::map < std::string, std::string > CryptGenKey_hook(drakvuf_t drakvuf, drakvuf_trap_info* info, std::vector <uint64_t> arguments);
+
+struct HCRYPTKEY_s
 {
-    CLOSED = 0,
-    LISTENING = 1,
-    SYN_SENT = 2,
-    SYN_RCVD = 3,
-    ESTABLISHED = 4,
-    FIN_WAIT1 = 5,
-    FIN_WAIT2 = 6,
-    CLOSE_WAIT = 7,
-    CLOSING = 8,
-    LIST_ACK = 9,
-    TIME_WAIT = 12,
-    DELETE_TCB = 13,
-    __TCP_STATE_MAX
+    uint32_t CPGenKey;
+    uint32_t CPDeriveKey;
+    uint32_t CPDestroyKey;
+    uint32_t CPSetKeyParam;
+    uint32_t CPGetKeyParam;
+    uint32_t CPExportKey;
+    uint32_t CPImportKey;
+    uint32_t CPEncrypt;
+    uint32_t CPDecrypt;
+    uint32_t CPDuplicateKey;
+    uint32_t hCryptProv;
+    uint32_t magic;
 };
 
-static const char* tcp_state_str[] =
+struct magic_s
 {
-    [CLOSED] = "closed",
-    [LISTENING] = "listening",
-    [SYN_SENT] = "syn_sent",
-    [SYN_RCVD] = "syn_rcvd",
-    [ESTABLISHED] = "established",
-    [FIN_WAIT1] = "fin_wait1",
-    [FIN_WAIT2] = "fin_wait2",
-    [CLOSE_WAIT] = "close_wait",
-    [CLOSING] = "closing",
-    [LIST_ACK] = "list_ack",
-    [TIME_WAIT] = "time_wait",
-    [DELETE_TCB] = "delete_tcb",
-    [10 ... 11] = "__undefined__"
+    uint32_t key_data;
 };
 
-struct tcp_endpoint_x86
+struct key_data_s
 {
-    uint64_t createtime;
-    uint32_t _pad1;
-    uint32_t inetaf;
-    uint32_t addrinfo;
-    uint32_t listentry;
-    uint8_t _pad2[0x1c];
-    uint32_t state;
-    uint16_t localport;
-    uint16_t remoteport;
-    uint8_t _pad3[0x138];
-    uint32_t owner;
-} __attribute__ ((packed));
-
-struct tcp_endpoint_x64
-{
-    uint8_t _pad1[0x18];
-    uint64_t inetaf;
-    uint64_t addrinfo;
-    uint64_t listentry;
-    uint8_t _pad2[0x38];
-    uint32_t state;
-    uint16_t localport;
-    uint16_t remoteport;
-    uint8_t _pad3[0x1c8];
-    uint64_t owner;
-} __attribute__ ((packed));
-
-// Tested for Windows 8.1
-struct tcp_endpoint_win81_x64
-{
-    addr_t _pad1[2];      // +0x0
-    addr_t inetaf;        // +0x10 -> inetaf_win10_x64
-    addr_t addrinfo;      // +0x18
-    uint8_t _pad2[0x4c];  // +0x20
-    uint32_t state;       // +0x6c
-    uint16_t localport;   // +0x70
-    uint16_t remoteport;  // +0x72
-    uint8_t _pad3[0x1e4]; // +0x74
-    addr_t owner;         // +0x258
-} __attribute__((packed));
-
-// That worked with Windows 10 before 1803
-struct tcp_endpoint_win10_x64
-{
-    addr_t _pad1[2];
-    addr_t inetaf; // inetaf_win10_x64
-    addr_t addrinfo;
-    uint8_t _pad2[0x4c];
-    uint32_t state;
-    uint16_t localport;
-    uint16_t remoteport;
-    uint8_t _pad3[0x1E4];
-    addr_t owner;
-    addr_t _pad4;
-    addr_t createtime;
-} __attribute__((packed));
-
-// Tested for Windows 10 build 1803
-struct tcp_endpoint_win10_x64_1803
-{
-    addr_t _pad1[2];      // +0x0
-    addr_t inetaf;        // +0x10 -> inetaf_win10_x64
-    addr_t addrinfo;      // +0x18
-    uint8_t _pad2[0x4c];  // +0x20
-    uint32_t state;       // +0x6c
-    uint16_t localport;   // +0x70
-    uint16_t remoteport;  // +0x72
-    uint8_t _pad3[0x204]; // +0x74
-    addr_t owner;         // +0x278
-} __attribute__((packed));
-
-struct addr_info_x86
-{
-    uint32_t local; // local_address
-    uint32_t _pad;
-    uint32_t remote; // ipv4/ipv6
-} __attribute__ ((packed));
-
-struct addr_info_x64
-{
-    uint64_t local;
-    uint64_t _pad;
-    uint64_t remote;
-} __attribute__ ((packed));
-
-struct local_address_x86
-{
-    uint8_t _pad[0xc];
-    uint32_t pdata;
-} __attribute__ ((packed));
-
-struct local_address_x64
-{
-    uint8_t _pad[0x10];
-    uint64_t pdata;
-} __attribute__ ((packed));
-
-struct local_address_win10_udp_x64
-{
-    addr_t pdata;
-} __attribute__((packed));
-
-#define AF_INET     0x2
-#define AF_INET6    0x17
-
-struct inetaf_x86
-{
-    uint8_t _pad[0xc];
-    uint8_t addressfamily;
-} __attribute__ ((packed));
-
-struct inetaf_x64
-{
-    uint8_t _pad[0x14];
-    uint8_t addressfamily;
-} __attribute__ ((packed));
-
-struct inetaf_win81_x64
-{
-    uint8_t _pad[0x18];
-    uint8_t addressfamily;
-} __attribute__ ((packed));
-
-using inetaf_win10_x64 = inetaf_win81_x64;
-
-/* UdpA */
-struct udp_endpoint_x86
-{
-    uint8_t _pad1[0x14];
-    uint32_t inetaf;
-    uint32_t owner;
-    uint8_t _pad2[0x14];
-    uint64_t createtime;
-    uint32_t localaddr;
-    uint8_t _pad3[0xc];
-    uint16_t port;
-} __attribute__ ((packed));
-
-struct udp_endpoint_x64
-{
-    uint8_t _pad1[0x20];
-    uint64_t inetaf;
-    uint64_t owner;
-    uint8_t _pad2[0x28];
-    uint64_t createtime;
-    uint64_t localaddr;
-    uint8_t _pad3[0x18];
-    uint16_t port;
-} __attribute__ ((packed));
-
-struct udp_endpoint_win10_x64
-{
-    addr_t _pad1[4];
-    addr_t inetaf; // inetaf_win10_x64
-    addr_t owner;
-    addr_t _pad2[5];
-    addr_t createtime;
-    uint8_t _pad3[0x18];
-    uint16_t port;
-    addr_t localaddr; // local_address_win10_udp_x64
-} __attribute__ ((packed));
-
-// This is yet another type of Windows string representation
-// specific for undocumented DnsQueryExW(...) function.
-// Same type for 64 and 32 bit versions.
-struct dns_query_ex_w_string_t
-{
-    uint32_t length = 0;
-    uint32_t unknown = 0; // maybe type of bytes in string, was equal to 1 in my case of wchars?
-    uint64_t pBuffer = 0; // pointer to a null-terminated string of wchars
-    //uint64_t unknown2 = 0; // maybe type of bytes in string, was equal to 1 in my case of wchars, commented out, since not needed yet
+    uint32_t unknown;
+    uint32_t alg;
+    uint32_t flags;
+    uint32_t key_size;
+    uint32_t key_bytes;
 };
+
+// CryptGenKey
+#define EXTRA_GENERATED_KEY "generated_key"
 
 #endif

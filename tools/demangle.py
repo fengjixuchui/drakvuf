@@ -10,7 +10,7 @@
 # conditions.  If you wish to embed DRAKVUF technology into proprietary   #
 # software, alternative licenses can be aquired from the author.          #
 #                                                                         #
-# Note that the GPL places important restrictions on "derivative works",  #
+# Note that the GPL places important restrictions on "derivative works' ,  #
 # yet it does not provide a detailed definition of that term.  To avoid   #
 # misunderstandings, we interpret that term as broadly as copyright law   #
 # allows.  For example, we consider an application to constitute a        #
@@ -53,7 +53,7 @@
 # must obey and carry forward all of the terms of this license, including #
 # obeying all GPL rules and restrictions.  For example, source code of    #
 # the whole work must be provided and free redistribution must be         #
-# allowed.  All GPL references to "this License", are to be treated as    #
+# allowed.  All GPL references to "this License' , are to be treated as    #
 # including the terms and conditions of this license text as well.        #
 #                                                                         #
 # Because this license imposes special exceptions to the GPL, Covered     #
@@ -102,64 +102,87 @@
 #                                                                         #
 #*************************************************************************#
 
-bin_PROGRAMS = drakvuf xen_memclone injector proc_stat
+#
+# Use this tool to post-process Volatility IST JSONs to demangle C++
+# function names. Once the following issue is closed this tool will
+# become obsolete:
+#
+# https://github.com/volatilityfoundation/volatility3/issues/157
+#
 
-SUBDIRS = xen_helper libdrakvuf libinjector plugins dirwatch
+import sys
+import json
 
-drakvuf_SOURCES = main.cpp drakvuf.cpp drakvuf.h
-xen_memclone_SOURCES  = xen_memclone.c
-injector_SOURCES = injector.c
-proc_stat_SOURCES = proc_stat.cpp
+DEMANGLE_MAP = {
+    '?0'    : ','    ,
+    '?1'    : '/'    ,
+    '?2'    : '\\'   ,
+    '?4'    : '.'    ,
+    '?3'    : ':'    ,
+    '?5'    : ' '    ,
+    '?6'    : ''     ,
+    '?7'    : '"'    ,
+    '?8'    : '\''   ,
+    '?9'    : '-'    ,
+    '?$AA'  : ''     ,
+    '?$AN'  : ''     ,
+    '?$CF'  : '%'    ,
+    '?$EA'  : '@'    ,
+    '?$CD'  : '#'    ,
+    '?$CG'  : '&'    ,
+    '?$HO'  : '~'    ,
+    '?$CI'  : '('    ,
+    '?$CJ'  : ')'    ,
+    '?$DM1' : '</'   ,
+    '?$DMO' : '>'    ,
+    '?$DN'  : '='    ,
+    '?$CK'  : '*'    ,
+    '?$CB'  : '!'    ,
+}
 
-AM_CPPFLAGS = $(CPPFLAGS)
-AM_CPPFLAGS += $(VMI_CFLAGS)
-AM_CPPFLAGS += $(GLIB_CFLAGS)
-AM_CPPFLAGS += $(JSON_CFLAGS)
-AM_CPPFLAGS += -I$(top_srcdir) -I$(srcdir)
+if len(sys.argv) != 2:
+    exit(1)
 
-AM_LDFLAGS =  $(LDFLAGS)
-AM_LDFLAGS += $(VMI_LIBS)
-AM_LDFLAGS += $(GLIB_LIBS)
-AM_LDFLAGS += $(JSONC_LIBS)
+with open(sys.argv[1], 'r') as json_file:
+    demangled = {}
+    demangled_count = 0
+    data = json.load(json_file)
 
-AM_CFLAGS = $(CFLAGS)
-AM_CXXFLAGS = $(CXXFLAGS)
+    for symbol in data["symbols"]:
+        if symbol.startswith("_"):
+            symbol = symbol[1:]
 
-if HARDENING
-AM_CFLAGS += $(HARDEN_CFLAGS) -DHARDENING
-AM_CXXFLAGS += $(HARDEN_CFLAGS) -DHARDENING
-endif
+        if not symbol.startswith("??_C@"):
+            continue
 
-if SANITIZE
-AM_CFLAGS += $(SANITIZE_CFLAGS)
-AM_CXXFLAGS += $(SANITIZE_CFLAGS)
-AM_LDFLAGS += $(SANITIZE_LDFLAGS)
-endif
+        name = symbol.split("@")[3]
 
-# Note that -pg is incompatible with HARDENING
-if DEBUG
-AM_CFLAGS += -DDRAKVUF_DEBUG -Werror -Wall -Wextra -g -ggdb3
-AM_CFLAGS += -Wno-missing-field-initializers
-AM_CXXFLAGS += -DDRAKVUF_DEBUG -Werror -Wall -Wextra -g -ggdb3
-AM_CXXFLAGS += -Wno-missing-field-initializers -Wno-unknown-warning-option -Wno-c99-designator -ferror-limit=0
-if !HARDENING
-AM_CFLAGS += -pg
-AM_CXXFLAGS += -pg
-endif
-endif
+        for replace in DEMANGLE_MAP:
+            name = name.replace(replace, DEMANGLE_MAP[replace])
 
-drakvuf_LDADD = libdrakvuf/libdrakvuf.la
-drakvuf_LDADD += xen_helper/libxenhelper.la
-drakvuf_LDADD += plugins/libdrakvufplugins.la
-drakvuf_LDADD += libinjector/libinjector.la
+        if not name:
+            continue;
 
-if HARDENING
-drakvuf_LDADD += $(HARDEN_LDFLAGS)
-endif
+        name = "str:" + name
+        info = {}
+        info["address"] = data["symbols"][symbol]["address"]
+        info["oldname"] = symbol
 
-injector_LDADD = libdrakvuf/libdrakvuf.la
-injector_LDADD += libinjector/libinjector.la
+        test = name
+        count = 0
+        while test in demangled:
+            count = count +1
+            test = name + "_" + str(count)
+        name = test
 
-proc_stat_LDADD = libdrakvuf/libdrakvuf.la
+        demangled[name] = info
+        demangled_count = demangled_count + 1
 
-xen_memclone_LDADD = xen_helper/libxenhelper.la
+    for new_symbol in demangled:
+        data["symbols"].pop(demangled[new_symbol]["oldname"])
+        data["symbols"][new_symbol] = {}
+        data["symbols"][new_symbol]["address"] = demangled[new_symbol]["address"]
+
+    if demangled_count:
+        with open(sys.argv[1], 'w') as json_out:
+            json.dump(data, json_out, indent=4)

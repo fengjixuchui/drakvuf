@@ -102,224 +102,105 @@
  *                                                                         *
  ***************************************************************************/
 
-#ifndef SOCKETMON_PRIVATE_H
-#define SOCKETMON_PRIVATE_H
+#include <map>
+#include <libdrakvuf/libdrakvuf.h>
 
 /*
- * Socketmon installs some traps on CR3 switches to ensure
- * that traps get registered properly. This sets an upper bound.
- * before bailing.
+ * Structures and functions to store stat data
  */
-#define CR3_COUNT_BEFORE_BAIL 1000
+static std::map<std::pair<vmi_pid_t, uint32_t>, uint64_t> stats;
 
-/* TcpE */
-enum tcp_state
+static event_response_t cr3_cb(__attribute__((unused)) drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
-    CLOSED = 0,
-    LISTENING = 1,
-    SYN_SENT = 2,
-    SYN_RCVD = 3,
-    ESTABLISHED = 4,
-    FIN_WAIT1 = 5,
-    FIN_WAIT2 = 6,
-    CLOSE_WAIT = 7,
-    CLOSING = 8,
-    LIST_ACK = 9,
-    TIME_WAIT = 12,
-    DELETE_TCB = 13,
-    __TCP_STATE_MAX
-};
+    auto key = std::make_pair(info->proc_data.pid, info->proc_data.tid);
+    auto search = stats.find(key);
+    if (stats.end() != search)
+        ++stats[key];
+    else
+        stats[key] = 1;
 
-static const char* tcp_state_str[] =
+    return VMI_EVENT_RESPONSE_NONE;
+}
+
+static drakvuf_t drakvuf = NULL;
+
+static void close_handler(int sig)
 {
-    [CLOSED] = "closed",
-    [LISTENING] = "listening",
-    [SYN_SENT] = "syn_sent",
-    [SYN_RCVD] = "syn_rcvd",
-    [ESTABLISHED] = "established",
-    [FIN_WAIT1] = "fin_wait1",
-    [FIN_WAIT2] = "fin_wait2",
-    [CLOSE_WAIT] = "close_wait",
-    [CLOSING] = "closing",
-    [LIST_ACK] = "list_ack",
-    [TIME_WAIT] = "time_wait",
-    [DELETE_TCB] = "delete_tcb",
-    [10 ... 11] = "__undefined__"
-};
+    drakvuf_interrupt(drakvuf, sig);
+}
 
-struct tcp_endpoint_x86
+int main(int argc, char** argv)
 {
-    uint64_t createtime;
-    uint32_t _pad1;
-    uint32_t inetaf;
-    uint32_t addrinfo;
-    uint32_t listentry;
-    uint8_t _pad2[0x1c];
-    uint32_t state;
-    uint16_t localport;
-    uint16_t remoteport;
-    uint8_t _pad3[0x138];
-    uint32_t owner;
-} __attribute__ ((packed));
+    /* this is the VM that we are looking at */
+    if (argc != 5)
+    {
+        printf("Usage: %s -d <domain name|domain id> -r <profile>\n", argv[0]);
+        return 1;
+    }
 
-struct tcp_endpoint_x64
-{
-    uint8_t _pad1[0x18];
-    uint64_t inetaf;
-    uint64_t addrinfo;
-    uint64_t listentry;
-    uint8_t _pad2[0x38];
-    uint32_t state;
-    uint16_t localport;
-    uint16_t remoteport;
-    uint8_t _pad3[0x1c8];
-    uint64_t owner;
-} __attribute__ ((packed));
+    char* domain;
 
-// Tested for Windows 8.1
-struct tcp_endpoint_win81_x64
-{
-    addr_t _pad1[2];      // +0x0
-    addr_t inetaf;        // +0x10 -> inetaf_win10_x64
-    addr_t addrinfo;      // +0x18
-    uint8_t _pad2[0x4c];  // +0x20
-    uint32_t state;       // +0x6c
-    uint16_t localport;   // +0x70
-    uint16_t remoteport;  // +0x72
-    uint8_t _pad3[0x1e4]; // +0x74
-    addr_t owner;         // +0x258
-} __attribute__((packed));
+    if (strcmp(argv[1], "-d")==0)
+    {
+        domain = argv[2];
+    }
+    else
+    {
+        printf("You have to specify either name or domid!\n");
+        return 1;
+    }
 
-// That worked with Windows 10 before 1803
-struct tcp_endpoint_win10_x64
-{
-    addr_t _pad1[2];
-    addr_t inetaf; // inetaf_win10_x64
-    addr_t addrinfo;
-    uint8_t _pad2[0x4c];
-    uint32_t state;
-    uint16_t localport;
-    uint16_t remoteport;
-    uint8_t _pad3[0x1E4];
-    addr_t owner;
-    addr_t _pad4;
-    addr_t createtime;
-} __attribute__((packed));
+    char* profile = NULL;
 
-// Tested for Windows 10 build 1803
-struct tcp_endpoint_win10_x64_1803
-{
-    addr_t _pad1[2];      // +0x0
-    addr_t inetaf;        // +0x10 -> inetaf_win10_x64
-    addr_t addrinfo;      // +0x18
-    uint8_t _pad2[0x4c];  // +0x20
-    uint32_t state;       // +0x6c
-    uint16_t localport;   // +0x70
-    uint16_t remoteport;  // +0x72
-    uint8_t _pad3[0x204]; // +0x74
-    addr_t owner;         // +0x278
-} __attribute__((packed));
+    if (strcmp(argv[3], "-r") == 0)
+    {
+        profile = argv[4];
+    }
+    else
+    {
+        printf("You have to specify path to profile!\n");
+        return 1;
+    }
 
-struct addr_info_x86
-{
-    uint32_t local; // local_address
-    uint32_t _pad;
-    uint32_t remote; // ipv4/ipv6
-} __attribute__ ((packed));
+    /* Some local variables */
+    drakvuf_trap_t trap;
+    trap.type = REGISTER;
+    trap.reg = CR3;
+    trap.cb = cr3_cb;
 
-struct addr_info_x64
-{
-    uint64_t local;
-    uint64_t _pad;
-    uint64_t remote;
-} __attribute__ ((packed));
 
-struct local_address_x86
-{
-    uint8_t _pad[0xc];
-    uint32_t pdata;
-} __attribute__ ((packed));
+    /* initialize the Drakvuf library */
+    if (!drakvuf_init(&drakvuf, domain, profile, NULL, false, false))
+    {
+        printf("Failed to initialize Drakvuf\n");
+        goto done;
+    }
 
-struct local_address_x64
-{
-    uint8_t _pad[0x10];
-    uint64_t pdata;
-} __attribute__ ((packed));
+    /* for a clean exit */
+    struct sigaction act;
 
-struct local_address_win10_udp_x64
-{
-    addr_t pdata;
-} __attribute__((packed));
+    act.sa_handler = close_handler;
+    act.sa_flags = 0;
+    sigemptyset(&act.sa_mask);
+    sigaction(SIGHUP,  &act, NULL);
+    sigaction(SIGTERM, &act, NULL);
+    sigaction(SIGINT,  &act, NULL);
+    sigaction(SIGALRM, &act, NULL);
 
-#define AF_INET     0x2
-#define AF_INET6    0x17
+    if ( !drakvuf_add_trap(drakvuf, &trap) )
+    {
+        printf("Failed to trap CR3\n");
+        goto done;
+    }
 
-struct inetaf_x86
-{
-    uint8_t _pad[0xc];
-    uint8_t addressfamily;
-} __attribute__ ((packed));
+    drakvuf_loop(drakvuf);
 
-struct inetaf_x64
-{
-    uint8_t _pad[0x14];
-    uint8_t addressfamily;
-} __attribute__ ((packed));
+    for (auto k: stats)
+        printf("PID:%d,TID:%d,COUNT:%ld\n", k.first.first, k.first.second, k.second);
 
-struct inetaf_win81_x64
-{
-    uint8_t _pad[0x18];
-    uint8_t addressfamily;
-} __attribute__ ((packed));
+done:
+    drakvuf_resume(drakvuf);
+    drakvuf_close(drakvuf, 0);
 
-using inetaf_win10_x64 = inetaf_win81_x64;
-
-/* UdpA */
-struct udp_endpoint_x86
-{
-    uint8_t _pad1[0x14];
-    uint32_t inetaf;
-    uint32_t owner;
-    uint8_t _pad2[0x14];
-    uint64_t createtime;
-    uint32_t localaddr;
-    uint8_t _pad3[0xc];
-    uint16_t port;
-} __attribute__ ((packed));
-
-struct udp_endpoint_x64
-{
-    uint8_t _pad1[0x20];
-    uint64_t inetaf;
-    uint64_t owner;
-    uint8_t _pad2[0x28];
-    uint64_t createtime;
-    uint64_t localaddr;
-    uint8_t _pad3[0x18];
-    uint16_t port;
-} __attribute__ ((packed));
-
-struct udp_endpoint_win10_x64
-{
-    addr_t _pad1[4];
-    addr_t inetaf; // inetaf_win10_x64
-    addr_t owner;
-    addr_t _pad2[5];
-    addr_t createtime;
-    uint8_t _pad3[0x18];
-    uint16_t port;
-    addr_t localaddr; // local_address_win10_udp_x64
-} __attribute__ ((packed));
-
-// This is yet another type of Windows string representation
-// specific for undocumented DnsQueryExW(...) function.
-// Same type for 64 and 32 bit versions.
-struct dns_query_ex_w_string_t
-{
-    uint32_t length = 0;
-    uint32_t unknown = 0; // maybe type of bytes in string, was equal to 1 in my case of wchars?
-    uint64_t pBuffer = 0; // pointer to a null-terminated string of wchars
-    //uint64_t unknown2 = 0; // maybe type of bytes in string, was equal to 1 in my case of wchars, commented out, since not needed yet
-};
-
-#endif
+    return 0;
+}
