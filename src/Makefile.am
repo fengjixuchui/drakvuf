@@ -104,7 +104,7 @@
 
 bin_PROGRAMS = drakvuf xen_memclone injector proc_stat
 
-SUBDIRS = xen_helper libdrakvuf libinjector plugins dirwatch
+SUBDIRS = xen_helper libdrakvuf libinjector plugins dirwatch libusermode
 
 drakvuf_SOURCES = main.cpp drakvuf.cpp drakvuf.h
 xen_memclone_SOURCES  = xen_memclone.c
@@ -128,6 +128,7 @@ AM_CXXFLAGS = $(CXXFLAGS)
 if HARDENING
 AM_CFLAGS += $(HARDEN_CFLAGS) -DHARDENING
 AM_CXXFLAGS += $(HARDEN_CFLAGS) -DHARDENING
+AM_LDFLAGS += $(HARDEN_LDFLAGS)
 endif
 
 if SANITIZE
@@ -139,9 +140,8 @@ endif
 # Note that -pg is incompatible with HARDENING
 if DEBUG
 AM_CFLAGS += -DDRAKVUF_DEBUG -Werror -Wall -Wextra -g -ggdb3
-AM_CFLAGS += -Wno-missing-field-initializers
 AM_CXXFLAGS += -DDRAKVUF_DEBUG -Werror -Wall -Wextra -g -ggdb3
-AM_CXXFLAGS += -Wno-missing-field-initializers -Wno-unknown-warning-option -Wno-c99-designator -ferror-limit=0
+AM_CXXFLAGS += -ferror-limit=0
 if !HARDENING
 AM_CFLAGS += -pg
 AM_CXXFLAGS += -pg
@@ -152,10 +152,7 @@ drakvuf_LDADD = libdrakvuf/libdrakvuf.la
 drakvuf_LDADD += xen_helper/libxenhelper.la
 drakvuf_LDADD += plugins/libdrakvufplugins.la
 drakvuf_LDADD += libinjector/libinjector.la
-
-if HARDENING
-drakvuf_LDADD += $(HARDEN_LDFLAGS)
-endif
+drakvuf_LDADD += libusermode/libusermode.la
 
 injector_LDADD = libdrakvuf/libdrakvuf.la
 injector_LDADD += libinjector/libinjector.la

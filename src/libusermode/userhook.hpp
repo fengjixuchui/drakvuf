@@ -102,266 +102,74 @@
  *                                                                         *
  ***************************************************************************/
 
-#include <stdlib.h>
+#ifndef WIN_USERHOOK_H
+#define WIN_USERHOOK_H
+
+#include <vector>
+#include <memory>
+
 #include <glib.h>
-#include <sys/mman.h>
+#include "plugins/private.h"
+#include "plugins/plugins_ex.h"
 
-#include "xen_helper.h"
+typedef event_response_t (*callback_t)(drakvuf_t drakvuf, drakvuf_trap_info* info);
 
-#ifndef XEN_ALTP2M_external
-#define XEN_ALTP2M_external 2
+enum target_hook_state
+{
+    HOOK_FIRST_TRY,
+    HOOK_PAGEFAULT_RETRY,
+    HOOK_FAILED,
+    HOOK_OK
+};
+
+struct hook_target_entry_t
+{
+    vmi_pid_t pid;
+    std::string target_name;
+    callback_t callback;
+    size_t args_num;
+    target_hook_state state;
+    drakvuf_trap_t* trap;
+    void* plugin;
+
+    hook_target_entry_t(std::string target_name, callback_t callback, size_t args_num, void* plugin)
+        : target_name(target_name), callback(callback), args_num(args_num), state(HOOK_FIRST_TRY), plugin(plugin) {}
+};
+
+struct return_hook_target_entry_t
+{
+    vmi_pid_t pid;
+    drakvuf_trap_t* trap;
+    void* plugin;
+    std::vector < uint64_t > arguments;
+};
+
+struct dll_view_t
+{
+    // relevant while loading
+    addr_t dtb;
+    uint32_t thread_id;
+    addr_t real_dll_base;
+    mmvad_info_t mmvad;
+    bool is_hooked;
+};
+
+typedef void (*dll_pre_hook_cb)(drakvuf_t, const dll_view_t*, void*);
+typedef void (*dll_post_hook_cb)(drakvuf_t, const dll_view_t*, void*);
+
+struct usermode_cb_registration {
+    dll_pre_hook_cb pre_cb;
+    dll_post_hook_cb post_cb;
+    void* extra;
+};
+
+typedef enum usermode_reg_status {
+    USERMODE_REGISTER_ERROR,
+    USERMODE_REGISTER_SUCCESS,
+    USERMODE_ARCH_UNSUPPORTED,
+} usermode_reg_status_t;
+
+usermode_reg_status_t drakvuf_register_usermode_callback(drakvuf_t drakvuf, usermode_cb_registration* reg);
+bool drakvuf_request_usermode_hook(drakvuf_t drakvuf, const dll_view_t* dll, const char* func_name, callback_t callback, size_t args_num, void* extra);
+
 #endif
-
-bool xen_init_interface(xen_interface_t** xen)
-{
-
-    *xen = (xen_interface_t*)g_try_malloc0(sizeof(xen_interface_t));
-
-    /* We create an xc interface to test connection to it */
-    (*xen)->xc = xc_interface_open(0, 0, 0);
-
-    if ((*xen)->xc == NULL)
-    {
-        fprintf(stderr, "xc_interface_open() failed!\n");
-        goto err;
-    }
-
-    /* We don't need this at the moment, but just in case */
-    //xen->xsh=xs_open(XS_OPEN_READONLY);
-    (*xen)->xl_logger = (xentoollog_logger*) xtl_createlogger_stdiostream(
-                            stderr, XTL_PROGRESS, 0);
-
-    if (!(*xen)->xl_logger)
-    {
-        goto err;
-    }
-
-    if (libxl_ctx_alloc(&(*xen)->xl_ctx, LIBXL_VERSION, 0,
-                        (*xen)->xl_logger))
-    {
-        fprintf(stderr, "libxl_ctx_alloc() failed!\n");
-        goto err;
-    }
-
-    (*xen)->evtchn = xc_evtchn_open(NULL, 0);
-    if (!(*xen)->evtchn)
-    {
-        printf("xc_evtchn_open() could not build event channel!\n");
-        goto err;
-    }
-    (*xen)->evtchn_fd = xc_evtchn_fd((*xen)->evtchn);
-
-    return 1;
-
-err:
-    xen_free_interface(*xen);
-    *xen = NULL;
-    return 0;
-}
-
-void xen_free_interface(xen_interface_t* xen)
-{
-    if (xen)
-    {
-        if (xen->xl_ctx)
-            libxl_ctx_free(xen->xl_ctx);
-        if (xen->xl_logger)
-            xtl_logger_destroy(xen->xl_logger);
-        //if (xen->xsh) xs_close(xen->xsh);
-        if (xen->xc)
-            xc_interface_close(xen->xc);
-        if (xen->evtchn)
-            xc_evtchn_close(xen->evtchn);
-        g_free(xen);
-    }
-}
-
-int get_dom_info(xen_interface_t* xen, const char* input, domid_t* domID,
-                 char** name)
-{
-    uint32_t _domID;
-    char* _name = NULL;
-    char* endptr = NULL;
-
-    errno = 0;
-    _domID = strtol(input, &endptr, 10);
-
-    if (errno || !endptr || (endptr && *endptr))
-        _domID = ~0U;
-
-    if (_domID == ~0U)
-    {
-        _name = strdup(input);
-        libxl_name_to_domid(xen->xl_ctx, input, &_domID);
-        if (!_domID || _domID == ~0U)
-        {
-            printf("Domain is not running, failed to get domID from name!\n");
-            free(_name);
-            return -1;
-        }
-        else
-        {
-            //printf("Got domID from name: %u\n", _domID);
-        }
-    }
-    else
-    {
-
-        xc_dominfo_t info = { 0 };
-
-        if ( 1 == xc_domain_getinfo(xen->xc, _domID, 1, &info)
-             && info.domid == _domID)
-        {
-            _name = libxl_domid_to_name(xen->xl_ctx, _domID);
-        }
-        else
-        {
-            _domID = ~0;
-        }
-    }
-
-    *name = _name;
-    *domID = (domid_t)_domID;
-
-    return 1;
-}
-
-uint64_t xen_get_maxmemkb(xen_interface_t* xen, domid_t domID)
-{
-    xc_dominfo_t info = { 0 };
-
-    if ( 1 == xc_domain_getinfo(xen->xc, domID, 1, &info) && info.domid == domID)
-        return info.max_memkb;
-
-    return 0;
-}
-
-uint64_t xen_memshare(xen_interface_t* xen, domid_t domID, domid_t cloneID)
-{
-
-    uint64_t shared = 0;
-
-#if __XEN_INTERFACE_VERSION__ < 0x00040600
-    uint64_t page, max_page = xc_domain_maximum_gpfn(xen->xc, domID);
-#else
-    xen_pfn_t page;
-    xen_pfn_t max_page;
-    if (xc_domain_maximum_gpfn(xen->xc, domID, &max_page))
-    {
-        printf("Failed to get max gpfn from Xen!\n");
-        goto done;
-    }
-#endif
-
-    if (!max_page)
-    {
-        printf("Failed to get max gpfn!\n");
-        goto done;
-    }
-
-    if (xc_memshr_control(xen->xc, domID, 1))
-    {
-        printf("Failed to enable memsharing on origin!\n");
-        goto done;
-    }
-    if (xc_memshr_control(xen->xc, cloneID, 1))
-    {
-        printf("Failed to enable memsharing on clone!\n");
-        goto done;
-    }
-
-    /*
-     * page will underflow when done
-     */
-    for (page = max_page; page <= max_page; page--)
-    {
-        uint64_t shandle;
-        uint64_t chandle;
-
-        if (xc_memshr_nominate_gfn(xen->xc, domID, page, &shandle))
-            continue;
-        if (xc_memshr_nominate_gfn(xen->xc, cloneID, page, &chandle))
-            continue;
-        if (xc_memshr_share_gfns(xen->xc, domID, page, shandle, cloneID, page,
-                                 chandle))
-            continue;
-
-        shared++;
-    }
-
-done:
-    return shared;
-}
-
-void xen_unshare_gfn(xen_interface_t* xen, domid_t domID, unsigned long gfn)
-{
-    void* memory = xc_map_foreign_range(xen->xc, domID, XC_PAGE_SIZE, PROT_WRITE, gfn);
-    if (memory) munmap(memory, XC_PAGE_SIZE);
-}
-
-void print_sharing_info(xen_interface_t* xen, domid_t domID)
-{
-
-    xc_dominfo_t info = { 0 };
-    xc_domain_getinfo(xen->xc, domID, 1, &info);
-
-    printf("Shared memory pages: %lu\n", info.nr_shared_pages);
-}
-
-/* Increments Xen's pause count if paused */
-bool xen_pause(xen_interface_t* xen, domid_t domID)
-{
-    int rc = xc_domain_pause(xen->xc, domID);
-    if ( rc < 0 )
-        return 0;
-
-    return 1;
-}
-
-/* Decrements Xen's pause count and only resumes when it reaches 0 */
-void xen_resume(xen_interface_t* xen, domid_t domID)
-{
-    xc_domain_unpause(xen->xc, domID);
-}
-
-void xen_force_resume(xen_interface_t* xen, domid_t domID)
-{
-    do
-    {
-        xc_dominfo_t info = {0};
-
-        if (1 == xc_domain_getinfo(xen->xc, domID, 1, &info) && info.domid == domID && info.paused)
-            xc_domain_unpause(xen->xc, domID);
-        else
-            break;
-
-    } while (1);
-}
-
-bool xen_enable_altp2m(xen_interface_t* xen, domid_t domID)
-{
-    uint64_t param_altp2m;
-
-    int rc = xc_hvm_param_get(xen->xc, domID, HVM_PARAM_ALTP2M, &param_altp2m);
-    if (rc < 0)
-    {
-        fprintf(stderr, "Failed to get HVM_PARAM_ALTP2M, RC: %i\n", rc);
-        return 0;
-    }
-
-    if (param_altp2m != XEN_ALTP2M_external)
-    {
-        rc = xc_hvm_param_set(xen->xc, domID, HVM_PARAM_ALTP2M, XEN_ALTP2M_external);
-        if (rc < 0)
-        {
-            fprintf(stderr, "Failed to set HVM_PARAM_ALTP2M, RC: %i\n", rc);
-            return 0;
-        }
-    }
-
-    rc = xc_altp2m_set_domain_state(xen->xc, domID, 1);
-    if (rc < 0)
-        return 0;
-
-    return 1;
-}

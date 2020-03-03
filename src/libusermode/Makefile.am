@@ -102,31 +102,42 @@
 #                                                                         #
 #*************************************************************************#
 
-h_sources = xen_helper.h
-c_sources = xen_helper.c
+sources = userhook.cpp
 
-AM_CPPFLAGS = -I$(top_srcdir)
-AM_CFLAGS  = $(CFLAGS) $(GLIB_CFLAGS)
-AM_CFLAGS += -Wall -Wextra -Werror -g -ggdb3
-AM_CFLAGS += -Wcast-qual -Wcast-align -Wstrict-aliasing \
-             -Wpointer-arith -Winit-self -Wshadow \
-             -Wswitch-enum -Wstrict-prototypes \
-             -Wmissing-prototypes -Wredundant-decls \
-             -Wfloat-equal -Wundef -Wvla \
-             -Wc++-compat
-AM_LDFLAGS = $(LDFLAGS) $(GLIB_LIBS)
+AM_CPPFLAGS = -I$(top_srcdir) -I$(top_srcdir)/src -I$(srcdir)
+AM_CPPFLAGS += $(CPPFLAGS)
+AM_CPPFLAGS += $(VMI_CFLAGS)
+AM_CPPFLAGS += $(GLIB_CFLAGS)
+AM_CPPFLAGS += $(JSONC_CFLAGS)
 
+AM_LDFLAGS =  $(LDFLAGS)
+AM_LDFLAGS += $(GLIB_LIBS)
+AM_LDFLAGS += $(VMI_LIBS)
+AM_LDFLAGS += $(JSONC_LIBS)
+
+AM_CXXFLAGS = $(CXXFLAGS)
 if HARDENING
-AM_CFLAGS += $(HARDEN_CFLAGS) -DHARDENING
-AM_LDFLAGS += $(HARDEN_LDFLAGS)
+AM_CXXFLAGS += $(HARDEN_CFLAGS) -DHARDENING
 endif
 
 if SANITIZE
-# For some reason this doesn't work.
-
-#AM_CFLAGS += $(SANITIZE_CFLAGS)
-#AM_LDFLAGS += $(SANITIZE_LDFLAGS)
+AM_CXXFLAGS += $(SANITIZE_CFLAGS)
+AM_LDFLAGS += $(SANITIZE_LDFLAGS)
 endif
 
-noinst_LTLIBRARIES= libxenhelper.la
-libxenhelper_la_SOURCES= $(h_sources) $(c_sources)
+if DEBUG
+AM_CXXFLAGS += -DDRAKVUF_DEBUG -Werror -Wall -Wextra -g -ggdb3
+AM_CXXFLAGS += -Wno-unused-parameter
+AM_CXXFLAGS += -Wcast-qual -Wcast-align -Wstrict-aliasing \
+               -Wpointer-arith -Winit-self -Wshadow \
+               -Wredundant-decls -Wfloat-equal -Wundef \
+               -Wvla
+# Note that -pg is incompatible with HARDENING
+if !HARDENING
+AM_CXXFLAGS += -pg
+endif
+endif
+
+noinst_LTLIBRARIES= libusermode.la
+libusermode_la_SOURCES= $(sources)
+libusermode_la_LIBADD = ../libdrakvuf/libdrakvuf.la
