@@ -260,6 +260,8 @@ struct wrapper
     };
 };
 
+void free_wrapper(gpointer p);
+
 struct free_trap_wrapper
 {
     unsigned int counter;
@@ -273,6 +275,8 @@ struct remapped_gfn
     xen_pfn_t r;
     bool active;
 };
+
+void free_remapped_gfn(gpointer p);
 
 typedef struct process_data_priv
 {

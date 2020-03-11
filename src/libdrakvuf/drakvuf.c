@@ -416,7 +416,7 @@ void drakvuf_remove_trap(drakvuf_t drakvuf, drakvuf_trap_t* trap,
 
         if (!free_wrapper)
         {
-            free_wrapper = (struct free_trap_wrapper*)g_try_malloc0(sizeof(struct free_trap_wrapper));
+            free_wrapper = (struct free_trap_wrapper*)g_slice_alloc0(sizeof(struct free_trap_wrapper));
             free_wrapper->free_routine = free_routine;
             free_wrapper->trap = trap;
             g_hash_table_insert(drakvuf->remove_traps,
@@ -733,7 +733,7 @@ gchar* drakvuf_escape_str(const char* input)
     }
 
     const char* escaped = json_object_to_json_string(obj);
-    if (NULL == obj)
+    if (NULL == escaped)
     {
         fprintf(stderr, "json_object_to_json_string() failed!\n");
         goto exit;

@@ -102,24 +102,15 @@
  *                                                                         *
  ***************************************************************************/
 
-#ifndef SSDTMON_H
-#define SSDTMON_H
+#include <glib.h>
+#include "private.h"
 
-#include "plugins/private.h"
-#include "plugins/plugins.h"
-
-class ssdtmon: public plugin
+void free_remapped_gfn(gpointer p)
 {
-public:
-    output_format_t format;
-    drakvuf_trap_t ssdtwrite;
-    drakvuf_trap_t ssdtwrite2;
+    g_slice_free(struct remapped_gfn, p);
+}
 
-    addr_t kiservicetable;
-    uint32_t kiservicelimit;
-
-    ssdtmon(drakvuf_t drakvuf, output_format_t output);
-    ~ssdtmon();
-};
-
-#endif
+void free_wrapper(gpointer p)
+{
+    g_slice_free(struct wrapper, p);
+}
