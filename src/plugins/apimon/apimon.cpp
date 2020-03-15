@@ -115,6 +115,13 @@
 #include "crypto.h"
 
 
+static void free_trap(drakvuf_trap_t* trap)
+{
+    return_hook_target_entry_t* ret_target = (return_hook_target_entry_t*)trap->data;
+    delete ret_target;
+    delete trap;
+}
+
 void print_arguments(drakvuf_t drakvuf, drakvuf_trap_info* info, std::vector < uint64_t > arguments, const std::vector < std::unique_ptr < ArgumentPrinter > > &argument_printers)
 {
     json_object *jobj = json_object_new_array();
@@ -165,8 +172,8 @@ static event_response_t usermode_return_hook_cb(drakvuf_t drakvuf, drakvuf_trap_
             print_arguments(drakvuf, info, ret_target->arguments, ret_target->argument_printers);
             break;
         case OUTPUT_KV:
-            printf("apimon, Time=" FORMAT_TIMEVAL ",VCPU=%" PRIu32 ",CR3=0x%" PRIx64 ",ProcessName=\"%s\",UserID=%" PRIi64 ",Method=\"%s\",CalledFrom=0x%" PRIx64 ",ReturnValue=0x%" PRIx64 ",Arguments=",
-            UNPACK_TIMEVAL(info->timestamp), info->vcpu, info->regs->cr3, info->proc_data.name,
+            printf("apimon Time=" FORMAT_TIMEVAL ",VCPU=%" PRIu32 ",CR3=0x%" PRIx64 ",PID=%d,PPID=%d,ProcessName=\"%s\",UserID=%" PRIi64 ",Method=\"%s\",CalledFrom=0x%" PRIx64 ",ReturnValue=0x%" PRIx64 ",Arguments=",
+            UNPACK_TIMEVAL(info->timestamp), info->vcpu, info->regs->cr3,info->proc_data.pid, info->proc_data.ppid, info->proc_data.name,
             info->proc_data.userid, info->trap->name, info->regs->rip, info->regs->rax);
             print_arguments(drakvuf, info, ret_target->arguments, ret_target->argument_printers);
             break;
@@ -180,14 +187,15 @@ static event_response_t usermode_return_hook_cb(drakvuf_t drakvuf, drakvuf_trap_
                     "\"UserId\": %" PRIu64 ", "
                     "\"PID\": %d, "
                     "\"PPID\": %d, "
+                    "\"TID\": %d, "
                     "\"Method\": \"%s\", "
-                    "\"CalledFrom\": 0x%" PRIx64 ", "
-                    "\"ReturnValue\": 0x%" PRIx64 ", "
+                    "\"CalledFrom\": \"0x%" PRIx64 "\", "
+                    "\"ReturnValue\": \"0x%" PRIx64 "\", "
                     "\"Arguments\": ",
                     UNPACK_TIMEVAL(info->timestamp),
                     escaped_pname,
                     USERIDSTR(drakvuf), info->proc_data.userid,
-                    info->proc_data.pid, info->proc_data.ppid,
+                    info->proc_data.pid, info->proc_data.ppid, info->proc_data.tid,
                     info->trap->name,
                     info->regs->rip,
                     info->regs->rax);
@@ -209,8 +217,7 @@ static event_response_t usermode_return_hook_cb(drakvuf_t drakvuf, drakvuf_trap_
     }
     printf("\n");
 
-    drakvuf_remove_trap(drakvuf, info->trap, nullptr);
-    delete ret_target;
+    drakvuf_remove_trap(drakvuf, info->trap, (drakvuf_trap_free_t)free_trap);
     return VMI_EVENT_RESPONSE_NONE;
 }
 
