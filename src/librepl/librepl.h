@@ -102,66 +102,20 @@
  *                                                                         *
  ***************************************************************************/
 
-#include <config.h>
-#include <glib.h>
-#include <inttypes.h>
-#include <libvmi/libvmi.h>
-#include <libvmi/peparse.h>
-#include <libdrakvuf/private.h>
-#include <assert.h>
-#include <map>
-#include <string>
-#include <vector>
-#include <iomanip>
+#pragma once
 
-#include "crypto.h"
-#include "plugins/plugins.h"
+#include <libdrakvuf/libdrakvuf.h>
 
-static std::string make_hex_string(uint8_t const* data, size_t len)
-{
-    std::ostringstream ss;
-    ss << std::hex << std::setfill('0');
-    for (size_t i = 0; i < len; i++)
-    {
-        ss << std::setw(2) << static_cast<int>(data[i]);
-    }
-    return ss.str();
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/**
+ * @param drakvuf - drakvuf instance
+ * @param info - trap info
+ */
+event_response_t repl_start(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
+
+#ifdef __cplusplus
 }
-
-// TODO: only works for 32 bits, we should implement 64-bit version in future
-std::map < std::string, std::string > CryptGenKey_hook(drakvuf_t drakvuf, drakvuf_trap_info* info, std::vector <uint64_t> arguments)
-{
-    std::map < std::string, std::string > ret;
-
-    if (!drakvuf_is_wow64(drakvuf, info))
-    {
-        PRINT_DEBUG("CryptGenKey hook not supported for 64-bit process\n");
-        return ret;
-    }
-    addr_t hKey_addr = 0;
-    HCRYPTKEY_s hKey;
-    magic_s magic;
-    key_data_s key_data;
-
-    auto vmi = vmi_lock_guard(drakvuf);
-
-    if (VMI_SUCCESS != vmi_read_32_va(vmi, arguments[3], info->proc_data.pid, (uint32_t*)&hKey_addr))
-        return ret;
-
-    if (VMI_SUCCESS != vmi_read_va(vmi, hKey_addr, info->proc_data.pid, sizeof(hKey), &hKey, NULL))
-        return ret;
-
-    hKey.magic ^= MAGIC_PTR_XOR_VALUE;
-    if (VMI_SUCCESS != vmi_read_va(vmi, hKey.magic, info->proc_data.pid, sizeof(magic), &magic, NULL))
-        return ret;
-
-    if (VMI_SUCCESS != vmi_read_va(vmi, magic.key_data, info->proc_data.pid, sizeof(key_data), &key_data, NULL))
-        return ret;
-
-    std::vector<uint8_t> key_bytes(key_data.key_size);
-    if (VMI_SUCCESS != vmi_read_va(vmi, key_data.key_bytes, info->proc_data.pid, key_bytes.size(), key_bytes.data(), NULL))
-        return ret;
-
-    ret[EXTRA_GENERATED_KEY] = make_hex_string(key_bytes.data(), key_bytes.size());
-    return ret;
-}
+#endif

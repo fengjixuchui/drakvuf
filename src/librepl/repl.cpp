@@ -102,66 +102,122 @@
  *                                                                         *
  ***************************************************************************/
 
-#include <config.h>
-#include <glib.h>
-#include <inttypes.h>
-#include <libvmi/libvmi.h>
-#include <libvmi/peparse.h>
-#include <libdrakvuf/private.h>
-#include <assert.h>
-#include <map>
+#include <unistd.h>
+#include <limits.h>
+
+#include <iostream>
+#include <sstream>
 #include <string>
-#include <vector>
-#include <iomanip>
 
-#include "crypto.h"
-#include "plugins/plugins.h"
+#include <librepl/librepl.h>
+#include <Python.h>
 
-static std::string make_hex_string(uint8_t const* data, size_t len)
+#ifdef DRAKVUF_DEBUG
+
+extern bool verbose;
+
+#define PRINT_DEBUG(args...) \
+    do { \
+        if(verbose) fprintf (stderr, args); \
+    } while (0)
+
+#else
+#define PRINT_DEBUG(args...) \
+    do {} while(0)
+#endif
+
+#define Py_REF_DEBUG \
+    PyObject* refCount = PyObject_CallObject(PySys_GetObject("gettotalrefcount"), NULL); \
+    PRINT_DEBUG("total refcount = %i\n", PyInt_AsSsize_t(refCount)); \
+    Py_DECREF(refCount);
+
+static std::string get_selfpath()
 {
-    std::ostringstream ss;
-    ss << std::hex << std::setfill('0');
-    for (size_t i = 0; i < len; i++)
-    {
-        ss << std::setw(2) << static_cast<int>(data[i]);
+    char buf[PATH_MAX];
+    ssize_t len = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (len != -1) {
+        buf[len] = '\0';
+        return std::string(buf);
+    } else {
+        PRINT_DEBUG("failed to get executable path!");
+        exit(1);
     }
-    return ss.str();
 }
 
-// TODO: only works for 32 bits, we should implement 64-bit version in future
-std::map < std::string, std::string > CryptGenKey_hook(drakvuf_t drakvuf, drakvuf_trap_info* info, std::vector <uint64_t> arguments)
+static event_response_t get_ret_val()
 {
-    std::map < std::string, std::string > ret;
+    // Using PyEval_GetGlobals would probably be nicer, but it returned nullptr
+    auto module = PyImport_AddModule("__main__");
+    auto retval = PyLong_AsSize_t(PyObject_GetAttrString(module, "retval"));
+    PRINT_DEBUG("retval: %lu\n", retval);
+    return static_cast<event_response_t>(retval);
+}
 
-    if (!drakvuf_is_wow64(drakvuf, info))
+static void repl_init(drakvuf_t drakvuf)
+{
+    // init python
+    Py_Initialize();
+
+    // get executable path
+    auto exe_path = get_selfpath();
+    auto py_drakvuf_path = exe_path.substr(0, exe_path.find_last_of('/')) + "/librepl";
+    PRINT_DEBUG("PyDrakvuf path: %s\n", py_drakvuf_path.c_str());
+
+    // load libdrakvuf
+    auto sysPath = PySys_GetObject("path");
+    PyList_Append(sysPath, PyUnicode_FromString(py_drakvuf_path.c_str()));
+    auto module = PyImport_ImportModule("libdrakvuf");
+
+    if (module == NULL)
     {
-        PRINT_DEBUG("CryptGenKey hook not supported for 64-bit process\n");
-        return ret;
+        std::cout << "No libdrakvuf.py found, please generate it before running REPL\n";
+        exit(1);
     }
-    addr_t hKey_addr = 0;
-    HCRYPTKEY_s hKey;
-    magic_s magic;
-    key_data_s key_data;
 
-    auto vmi = vmi_lock_guard(drakvuf);
+    // import modules
+    if(PyRun_SimpleString("from ctypes import *\nimport IPython\nimport libdrakvuf\n") == -1)
+    {
+        std::cout << "Failed to load one of dependencies\n";
+        PyErr_Print();
+        exit(1);
+    }
 
-    if (VMI_SUCCESS != vmi_read_32_va(vmi, arguments[3], info->proc_data.pid, (uint32_t*)&hKey_addr))
-        return ret;
+    PyObject_SetAttrString(module, "drakvuf", PyLong_FromVoidPtr(static_cast<void*>(drakvuf)));
+}
 
-    if (VMI_SUCCESS != vmi_read_va(vmi, hKey_addr, info->proc_data.pid, sizeof(hKey), &hKey, NULL))
-        return ret;
+event_response_t repl_start(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
+{
+    repl_init(drakvuf);
 
-    hKey.magic ^= MAGIC_PTR_XOR_VALUE;
-    if (VMI_SUCCESS != vmi_read_va(vmi, hKey.magic, info->proc_data.pid, sizeof(magic), &magic, NULL))
-        return ret;
+    std::cout << "=================================================================\n"
+              << "REPL STARTING...\n"
+              << "=================================================================\n";
 
-    if (VMI_SUCCESS != vmi_read_va(vmi, magic.key_data, info->proc_data.pid, sizeof(key_data), &key_data, NULL))
-        return ret;
+    {
+        std::stringstream ss;
 
-    std::vector<uint8_t> key_bytes(key_data.key_size);
-    if (VMI_SUCCESS != vmi_read_va(vmi, key_data.key_bytes, info->proc_data.pid, key_bytes.size(), key_bytes.data(), NULL))
-        return ret;
+        // convenient variable assignment
+        ss << "trap_info = cast(" << static_cast<void*>(info) << ", POINTER(libdrakvuf.drakvuf_trap_info_t))\n";
 
-    ret[EXTRA_GENERATED_KEY] = make_hex_string(key_bytes.data(), key_bytes.size());
-    return ret;
+        // pass repl_start to python
+        ss << "trap_cb = CFUNCTYPE(libdrakvuf.event_response_t, libdrakvuf.drakvuf_t, POINTER(libdrakvuf.drakvuf_trap_info_t))\n";
+        ss << "repl_start = cast(" << reinterpret_cast<void*>(repl_start) << ", trap_cb)\n";
+        ss << "drakvuf = cast(" << reinterpret_cast<void*>(drakvuf) << ", libdrakvuf.drakvuf_t)\n";
+        ss << "retval = " << reinterpret_cast<int>(VMI_EVENT_RESPONSE_NONE) << "\n";
+
+        PRINT_DEBUG("setting up variables:\n%s", ss.str().c_str());
+
+        PyRun_SimpleString(ss.str().c_str());
+    }
+
+    PyRun_SimpleString(
+        "IPython.embed(colors='neutral', banner2=\"\"\""
+        "REPL ready to go, enjoy hacking!\n"
+        "trap_info contains current trap info structure\n"
+        "drakvuf contains drakvuf_t pointer\n"
+        "retval contains event return code, which you can overwrite\n"
+        "to go back to drakvuf loop use exit(), to break loop use CTRL+C\"\"\")\n"
+    );
+
+    return get_ret_val();
 }

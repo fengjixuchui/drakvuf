@@ -102,66 +102,112 @@
  *                                                                         *
  ***************************************************************************/
 
-#include <config.h>
-#include <glib.h>
-#include <inttypes.h>
+#include <errno.h>
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <signal.h>
+#include <unistd.h>
+
 #include <libvmi/libvmi.h>
-#include <libvmi/peparse.h>
-#include <libdrakvuf/private.h>
-#include <assert.h>
-#include <map>
-#include <string>
-#include <vector>
-#include <iomanip>
+#include <librepl/librepl.h>
+#include <libdrakvuf/libdrakvuf.h>
 
-#include "crypto.h"
-#include "plugins/plugins.h"
+static drakvuf_t drakvuf;
 
-static std::string make_hex_string(uint8_t const* data, size_t len)
+static void close_handler(int sig)
 {
-    std::ostringstream ss;
-    ss << std::hex << std::setfill('0');
-    for (size_t i = 0; i < len; i++)
-    {
-        ss << std::setw(2) << static_cast<int>(data[i]);
-    }
-    return ss.str();
+    drakvuf_interrupt(drakvuf, sig);
 }
 
-// TODO: only works for 32 bits, we should implement 64-bit version in future
-std::map < std::string, std::string > CryptGenKey_hook(drakvuf_t drakvuf, drakvuf_trap_info* info, std::vector <uint64_t> arguments)
+static inline void print_help(void)
 {
-    std::map < std::string, std::string > ret;
+    fprintf(stderr, "Required input:\n"
+            "\t -r <path to json>         The OS kernel's JSON\n"
+            "\t -d <domain ID or name>    The domain's ID or name\n"
+#ifdef DRAKVUF_DEBUG
+            "\t -v                        Turn on verbose (debug) output\n"
+#endif
+            "\t -l                        Use libvmi.conf\n"
+            "\t -k <kpgd value>           Use provided KPGD value for faster and more robust startup (advanced)\n"
+           );
+}
 
-    if (!drakvuf_is_wow64(drakvuf, info))
+int main(int argc, char** argv)
+{
+    int return_code = 0;
+    char c;
+    char* json_kernel_path = NULL;
+    char* domain = NULL;
+    bool libvmi_conf = false;
+    bool verbose = 0;
+    addr_t kpgd = 0;
+
+    if (argc < 4)
     {
-        PRINT_DEBUG("CryptGenKey hook not supported for 64-bit process\n");
-        return ret;
+        print_help();
+        return 1;
     }
-    addr_t hKey_addr = 0;
-    HCRYPTKEY_s hKey;
-    magic_s magic;
-    key_data_s key_data;
 
-    auto vmi = vmi_lock_guard(drakvuf);
+    while ((c = getopt (argc, argv, "r:d:i:I:e:m:B:P:f:k:vlg")) != -1)
+        switch (c)
+        {
+            case 'r':
+                json_kernel_path = optarg;
+                break;
+            case 'd':
+                domain = optarg;
+                break;
+#ifdef DRAKVUF_DEBUG
+            case 'v':
+                verbose = 1;
+                break;
+#endif
+            case 'l':
+                libvmi_conf = true;
+                break;
+            case 'k':
+                kpgd = strtoull(optarg, NULL, 0);
+                break;
+            default:
+                fprintf(stderr, "Unrecognized option: %c\n", c);
+                return return_code;
+        }
 
-    if (VMI_SUCCESS != vmi_read_32_va(vmi, arguments[3], info->proc_data.pid, (uint32_t*)&hKey_addr))
-        return ret;
+    if ( !json_kernel_path || !domain )
+    {
+        print_help();
+        return 1;
+    }
 
-    if (VMI_SUCCESS != vmi_read_va(vmi, hKey_addr, info->proc_data.pid, sizeof(hKey), &hKey, NULL))
-        return ret;
+    /* for a clean exit */
+    struct sigaction act;
+    act.sa_handler = close_handler;
+    act.sa_flags = 0;
+    sigemptyset(&act.sa_mask);
+    sigaction(SIGHUP, &act, NULL);
+    sigaction(SIGTERM, &act, NULL);
+    sigaction(SIGINT, &act, NULL);
+    sigaction(SIGALRM, &act, NULL);
 
-    hKey.magic ^= MAGIC_PTR_XOR_VALUE;
-    if (VMI_SUCCESS != vmi_read_va(vmi, hKey.magic, info->proc_data.pid, sizeof(magic), &magic, NULL))
-        return ret;
+    if (!drakvuf_init(&drakvuf, domain, json_kernel_path, NULL, verbose, libvmi_conf, kpgd))
+    {
+        fprintf(stderr, "Failed to initialize on domain %s\n", domain);
+        return 1;
+    }
 
-    if (VMI_SUCCESS != vmi_read_va(vmi, magic.key_data, info->proc_data.pid, sizeof(key_data), &key_data, NULL))
-        return ret;
+    drakvuf_trap_t inject_trap = {
+        .type = REGISTER,
+        .reg = CR3,
+        .cb = &repl_start,
+        .name = "repl_trap"
+    };
 
-    std::vector<uint8_t> key_bytes(key_data.key_size);
-    if (VMI_SUCCESS != vmi_read_va(vmi, key_data.key_bytes, info->proc_data.pid, key_bytes.size(), key_bytes.data(), NULL))
-        return ret;
+    if (!drakvuf_add_trap(drakvuf, &inject_trap))
+        throw -1;
 
-    ret[EXTRA_GENERATED_KEY] = make_hex_string(key_bytes.data(), key_bytes.size());
-    return ret;
+    if (!drakvuf_is_interrupted(drakvuf))
+        drakvuf_loop(drakvuf);
+
+    return return_code;
 }
