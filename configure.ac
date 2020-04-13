@@ -111,8 +111,8 @@ AC_CONFIG_MACRO_DIR([m4])
 
 AC_PROG_CC_STDC
 AC_PROG_CXX(clang++)
-AX_REQUIRE_DEFINED([AX_CXX_COMPILE_STDCXX_11])
-AX_CXX_COMPILE_STDCXX_11
+AX_REQUIRE_DEFINED([AX_CXX_COMPILE_STDCXX])
+AX_CXX_COMPILE_STDCXX([17])
 
 ######################################################
 
@@ -353,6 +353,16 @@ AC_ARG_ENABLE([plugin_apimon],
 AM_CONDITIONAL([PLUGIN_APIMON], [test x$plugin_apimon = xyes])
 if test x$plugin_apimon = xyes; then
   AC_DEFINE_UNQUOTED(ENABLE_PLUGIN_APIMON, 1, "")
+fi
+
+AC_ARG_ENABLE([plugin_procdump],
+  [AS_HELP_STRING([--disable-plugin-procdump],
+    [Enable the windows process dumping plugin @<:@yes@:>@])],
+  [plugin_procdump="$enableval"],
+  [plugin_procdump="yes"])
+AM_CONDITIONAL([PLUGIN_PROCDUMP], [test x$plugin_procdump = xyes])
+if test x$plugin_procdump = xyes; then
+  AC_DEFINE_UNQUOTED(ENABLE_PLUGIN_PROCDUMP, 1, "")
 fi
 
 #####################################################
@@ -619,6 +629,7 @@ LibraryMon:   $plugin_librarymon
 DKOMmon:      $plugin_dkommon
 WMIMon:       $plugin_wmimon
 MEMDump:      $plugin_memdump
+ProcDump:     $plugin_procdump
 APIMon:       $plugin_apimon
 -------------------------------------------------------------------------------
 REPL:         $repl
