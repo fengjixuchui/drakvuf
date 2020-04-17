@@ -112,16 +112,8 @@ AC_CONFIG_MACRO_DIR([m4])
 AC_PROG_CC_STDC
 AC_PROG_CXX(clang++)
 AX_REQUIRE_DEFINED([AX_CXX_COMPILE_STDCXX])
-AX_CXX_COMPILE_STDCXX([17])
-
-######################################################
-
-AC_ARG_ENABLE([repl],
-  [AS_HELP_STRING([--enable-repl],
-    [Enable the repl library @<:@no@:>@])],
-  [repl="$enableval"],
-  [repl="no"])
-AM_CONDITIONAL([REPL], [test x$repl = xyes])
+AX_CXX_COMPILE_STDCXX([17], [ext], [mandatory])
+CXXFLAGS="-std=gnu++17"
 
 ######################################################
 
@@ -367,6 +359,13 @@ fi
 
 #####################################################
 
+AC_ARG_ENABLE([repl],
+  [AS_HELP_STRING([--enable-repl],
+    [Enable the repl library @<:@no@:>@])],
+  [repl="$enableval"],
+  [repl="no"])
+AM_CONDITIONAL([REPL], [test x$repl = xyes])
+
 AC_ARG_ENABLE([hardening],
   [AS_HELP_STRING([--enable-hardening],
     [Enable compiler and linker options to frustrate memory corruption exploits @<:@yes@:>@])],
@@ -549,6 +548,8 @@ AH_VERBATIM([__STDC_FORMAT_MACROS],
 PKG_CHECK_MODULES([GLIB], [glib-2.0 >= 2.28], [], [AC_ERROR([glib-2.0 (version 2.28+) has to be installed!])])
 PKG_CHECK_MODULES([VMI], [libvmi >= 0.11], [], [AC_ERROR([LibVMI not found])])
 PKG_CHECK_MODULES([JSONC], [json-c], [], [AC_ERROR([libjson-c not found])])
+AS_IF([test x$plugin_procdump == xyes],
+    [PKG_CHECK_MODULES([ZLIB],[zlib], [], [AC_ERROR([zlib not found])])])
 
 AC_CHECK_LIB([xencall], [xencall_buffers_never_fault])
 AC_CHECK_LIB([xenforeignmemory], [xenforeignmemory_map_resource])
