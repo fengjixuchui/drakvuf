@@ -295,7 +295,12 @@ static enum rtlcopy_status dump_with_rtlcopymemory(drakvuf_t drakvuf,
     auto skip = max_contigious_range(prototype_ptes, total_number_of_ptes,
                                      vad->second.idx, ptes_to_dump);
 
-    g_assert(ptes_to_dump);
+    if (!ptes_to_dump)
+    {
+        PRINT_DEBUG("[PROCDUMP] [PID:%d] Error: Dump %u PTEs from %u / %lu\n",
+                    ctx->pid, ptes_to_dump, vad->second.idx, total_number_of_ptes);
+        return RTLCOPY_RETRY_WITH_MMAP;
+    }
 
     if (skip)
     {
@@ -317,6 +322,21 @@ static enum rtlcopy_status dump_with_rtlcopymemory(drakvuf_t drakvuf,
         ptes_to_dump = ctx->POOL_SIZE_IN_PAGES;
 
     const auto idx = vad->second.idx; // cache it because we will change it
+    if (idx + ptes_to_dump == total_number_of_ptes)
+    {
+        ctx->vads.erase(vad_start);
+    }
+    else if (idx + ptes_to_dump < total_number_of_ptes)
+    {
+        ctx->vads.begin()->second.idx += ptes_to_dump;
+    }
+    else
+    {
+        PRINT_DEBUG("[PROCDUMP] [PID:%d] Error: Dump %u PTEs from %u / %lu\n",
+                    ctx->pid, ptes_to_dump, idx, total_number_of_ptes);
+        return RTLCOPY_RETRY_WITH_MMAP;
+    }
+
 
     ctx->current_dump_size = ptes_to_dump * VMI_PS_4KB;
     struct argument args[3] = {};
@@ -336,21 +356,6 @@ static enum rtlcopy_status dump_with_rtlcopymemory(drakvuf_t drakvuf,
     info->regs->rip = ctx->plugin->memcpy_va;
 
     ctx->bp->cb = rtlcopymemory_cb;
-
-    if (idx + ptes_to_dump == total_number_of_ptes)
-    {
-        ctx->vads.erase(vad_start);
-    }
-    else if (idx + ptes_to_dump < total_number_of_ptes)
-    {
-        ctx->vads.begin()->second.idx += ptes_to_dump;
-    }
-    else
-    {
-        PRINT_DEBUG("[PROCDUMP] [PID:%d] Error: Dump %u PTEs from %u / %lu\n",
-                    ctx->pid, ptes_to_dump, idx, total_number_of_ptes);
-        g_assert(false);
-    }
 
     return RTLCOPY_INJECT;
 }
@@ -449,8 +454,7 @@ static event_response_t detach(drakvuf_t drakvuf, drakvuf_trap_info_t* info,
 static event_response_t rtlcopymemory_cb(drakvuf_t drakvuf,
         drakvuf_trap_info_t* info)
 {
-    attached_proc_data_t proc(drakvuf, info);
-    if (!proc.pid)
+    if (!info->attached_proc_data.pid)
     {
         PRINT_DEBUG("[PROCDUMP] [PID:%d] [TID:%d] Error: Failed to get "
                     "attached process\n",
@@ -460,8 +464,8 @@ static event_response_t rtlcopymemory_cb(drakvuf_t drakvuf,
 
     auto ctx = static_cast<struct procdump_ctx*>(info->trap->data);
 
-    if (proc.pid != ctx->pid ||
-        proc.tid != ctx->tid)
+    if (info->attached_proc_data.pid != ctx->pid ||
+        info->attached_proc_data.tid != ctx->tid)
     {
         return VMI_EVENT_RESPONSE_NONE;
     }
@@ -489,8 +493,7 @@ static event_response_t rtlcopymemory_cb(drakvuf_t drakvuf,
 static event_response_t exallocatepool_cb(drakvuf_t drakvuf,
         drakvuf_trap_info_t* info)
 {
-    attached_proc_data_t proc(drakvuf, info);
-    if (!proc.pid)
+    if (!info->attached_proc_data.pid)
     {
         PRINT_DEBUG("[PROCDUMP] [PID:%d] [TID:%d] Error: Failed to get "
                     "attached process\n",
@@ -500,8 +503,8 @@ static event_response_t exallocatepool_cb(drakvuf_t drakvuf,
 
     auto ctx = static_cast<struct procdump_ctx*>(info->trap->data);
 
-    if (proc.pid != ctx->pid ||
-        proc.tid != ctx->tid)
+    if (info->attached_proc_data.pid != ctx->pid ||
+        info->attached_proc_data.tid != ctx->tid)
     {
         return VMI_EVENT_RESPONSE_NONE;
     }
@@ -520,7 +523,7 @@ static event_response_t exallocatepool_cb(drakvuf_t drakvuf,
     }
     else
         PRINT_DEBUG("[PROCDUMP] [PID:%d] Failed to allocate pool\n",
-                    proc.pid);
+                    info->attached_proc_data.pid);
 
     return detach(drakvuf, info, ctx);
 }
@@ -616,8 +619,7 @@ static bool dump_mmvad(drakvuf_t drakvuf, mmvad_info_t* mmvad,
 static event_response_t terminate_process_cb(drakvuf_t drakvuf,
         drakvuf_trap_info_t* info)
 {
-    attached_proc_data_t proc(drakvuf, info);
-    if (!proc.pid)
+    if (!info->attached_proc_data.pid)
     {
         PRINT_DEBUG("[PROCDUMP] [PID:%d] [TID:%d] Error: Failed to get "
                     "attached process\n",
@@ -634,28 +636,28 @@ static event_response_t terminate_process_cb(drakvuf_t drakvuf,
     // The callback could be called if other thread invokes NtTerminateProcess
     // or as a return path from injected function.
     // In both cases we should not starting process dump again.
-    auto it = plugin->terminating.find(proc.pid);
+    auto it = plugin->terminating.find(info->attached_proc_data.pid);
     if (it != plugin->terminating.end())
     {
         if (!it->second)
-            plugin->terminating.erase(proc.pid);
+            plugin->terminating.erase(info->attached_proc_data.pid);
 
         return VMI_EVENT_RESPONSE_NONE;
     }
     else
-        plugin->terminating[proc.pid] = proc.tid;
+        plugin->terminating[info->attached_proc_data.pid] = info->attached_proc_data.tid;
 
     // TODO Move into constructor
     auto ctx = new procdump_ctx;
-    ctx->pid = proc.pid;
-    ctx->ppid = proc.ppid;
-    ctx->tid = proc.tid;
-    ctx->name = std::string(proc.name);
+    ctx->pid = info->attached_proc_data.pid;
+    ctx->ppid = info->attached_proc_data.ppid;
+    ctx->tid = info->attached_proc_data.tid;
+    ctx->name = std::string(info->attached_proc_data.name);
     ctx->plugin = plugin;
     ctx->idx = plugin->procdumps_count++;
     ctx->size = 0;
     // Get virtual address space map of the process
-    drakvuf_traverse_mmvad(drakvuf, proc.base_addr, dump_mmvad,
+    drakvuf_traverse_mmvad(drakvuf, info->attached_proc_data.base_addr, dump_mmvad,
                            ctx);
     if (ctx->vads.empty())
     {
@@ -666,8 +668,8 @@ static event_response_t terminate_process_cb(drakvuf_t drakvuf,
     {
         PRINT_DEBUG("[PROCDUMP] [\"%s\":%4d] [PID:%4d] [TID:%4d] [\"%s\"] "
                     "Dump 0x%lx (%ld MiB, %lu VADs) SN=%lu\n",
-                    __FUNCTION__, __LINE__, proc.pid,
-                    proc.tid, proc.name, ctx->size,
+                    __FUNCTION__, __LINE__, info->attached_proc_data.pid,
+                    info->attached_proc_data.tid, info->attached_proc_data.name, ctx->size,
                     ctx->size / 1024 / 1024, ctx->vads.size(), ctx->idx);
     }
 
