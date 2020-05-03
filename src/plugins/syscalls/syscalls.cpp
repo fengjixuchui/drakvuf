@@ -187,19 +187,20 @@ void print_header(output_format_t format, drakvuf_t drakvuf,
             type = syscall ? "syscall" : "sysret";
             escaped_pname = drakvuf_escape_str(info->attached_proc_data.name);
             printf( "{"
+                    "\"Plugin\": \"syscalls\","
                     "\"Type\" : \"%s\","
                     "\"TimeStamp\" :" "\"" FORMAT_TIMEVAL "\","
                     "\"VCPU\": %" PRIu32 ","
                     "\"CR3\": %" PRIu64 ","
                     "\"ProcessName\": %s,"
-                    "\"UserName\": %s,"
-                    "\"UserId\": %" PRIu64 \
+                    "\"UserName\": \"%s\","
+                    "\"UserId\": %" PRIu64 ","
                     "\"PID\" : %d,"
                     "\"PPID\": %d,"
                     "\"TID\": %d,"
                     "\"Module\": \"%s\","
                     "\"Method\": \"%s\","
-                    "\"Args\": [",
+                    "\"Args\": {",
                     type, UNPACK_TIMEVAL(info->timestamp),
                     info->vcpu, info->regs->cr3, escaped_pname,
                     USERIDSTR(drakvuf), info->attached_proc_data.userid,
@@ -362,7 +363,7 @@ void print_args(syscalls* s, drakvuf_t drakvuf, drakvuf_trap_info_t* info, const
     }
 }
 
-void print_footer(output_format_t format, uint32_t nargs)
+void print_footer(output_format_t format, uint32_t nargs, bool syscall)
 {
     switch (format)
     {
@@ -373,8 +374,11 @@ void print_footer(output_format_t format, uint32_t nargs)
             printf("\n");
             break;
         case OUTPUT_JSON:
-            // close JSON args array and document
-            printf("] }\n");
+            // close JSON args object and document
+            if ( syscall )
+                printf("] } }\n");
+            else
+                printf("} }\n");
             break;
         default:
         case OUTPUT_DEFAULT:

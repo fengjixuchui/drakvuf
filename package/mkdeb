@@ -45,7 +45,7 @@ Source: drakvuf-bundle
 Version: $version
 Architecture: $arch
 Maintainer: Unmaintained snapshot
-Depends: libpixman-1-0, libpng16-16, libnettle6, libgnutls30, libfdt1, libglib2.0-0, libglib2.0-dev, libjson-c3, libyajl2, libaio1
+Depends: libpixman-1-0, libpng16-16, libnettle6 | libnettle7, libgnutls30, libfdt1, libglib2.0-0, libglib2.0-dev, libjson-c3 | libjson-c4, libyajl2, libaio1
 Conflicts: xen-hypervisor-4.6-amd64, xen-hypervisor-4.7-amd64, xen-hypervisor-4.8-amd64, xen-hypervisor-4.9-amd64, xen-hypervisor-4.10-amd64, xen-hypervisor-4.11-amd64, xen-hypervisor-4.12-amd64
 Section: admin
 Priority: optional
@@ -67,6 +67,7 @@ mkdir -p deb/etc/default/grub.d/
 mkdir -p deb/etc/modules-load.d/
 cp package/extra/etc/default/grub.d/xen.cfg deb/etc/default/grub.d/
 cp package/extra/etc/modules-load.d/xen.conf deb/etc/modules-load.d/
+cp package/extra/usr/bin/drak-find-xen-defaults deb/usr/bin/
 
 # Find all /etc files and add them to conffiles
 find deb/etc -type f -printf /etc/%P\\n >deb/DEBIAN/conffiles
