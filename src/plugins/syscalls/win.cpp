@@ -271,23 +271,9 @@ static bool trap_syscall_table_entries(drakvuf_t drakvuf, vmi_instance_t vmi, sy
     for ( uint16_t syscall_num = 0; syscall_num < sst[1]; syscall_num++ )
     {
         long offset = 0;
-        addr_t syscall_va, rva;
+        addr_t syscall_va;
 
-        struct wrapper *w = g_slice_new0(struct wrapper);
-        drakvuf_trap_t* trap = g_slice_new0(drakvuf_trap_t);
-
-        w->num = syscall_num;
-        w->s = s;
-        w->type = ntos ? "nt" : "win32k";
-
-        trap->breakpoint.lookup_type = LOOKUP_DTB;
-        trap->breakpoint.dtb = cr3;
-        trap->breakpoint.addr_type = ADDR_VA;
-        trap->type = BREAKPOINT;
-        trap->cb = syscall_cb;
-        trap->data = w;
-
-        if ( s->pm == VMI_PM_IA32E )
+        if ( !s->is32bit )
         {
             /*
              * The offsets in the SSDT are 32-bit RVAs calculated from the table base.
@@ -299,10 +285,12 @@ static bool trap_syscall_table_entries(drakvuf_t drakvuf, vmi_instance_t vmi, sy
         } else
             syscall_va = table[syscall_num];
 
-        rva = syscall_va - base;
-        trap->breakpoint.addr = syscall_va;
+        addr_t rva = syscall_va - base;
+        if ( s->is32bit )
+            rva = static_cast<uint32_t>(rva);
 
-        const struct symbol* symbol = NULL;
+        const struct symbol* symbol = nullptr;
+        const syscall_t* definition = nullptr;
         if ( symbols )
         {
             for (unsigned int z=0; z < symbols->count; z++)
@@ -315,7 +303,7 @@ static bool trap_syscall_table_entries(drakvuf_t drakvuf, vmi_instance_t vmi, sy
                     {
                         if ( !strcmp(definitions[d]->name, symbol->name) )
                         {
-                            w->sc = definitions[d];
+                            definition = definitions[d];
                             break;
                         }
                     }
@@ -326,8 +314,30 @@ static bool trap_syscall_table_entries(drakvuf_t drakvuf, vmi_instance_t vmi, sy
 
         if ( !symbol )
             PRINT_DEBUG("\t Syscall %u @ 0x%lx has no debug information matching it with RVA 0x%lx. Table: 0x%lx Offset: 0x%lx\n", syscall_num, syscall_va, rva, sst[0], offset);
-        else if ( !w->sc )
+        else if ( !definition )
             PRINT_DEBUG("\t Syscall %s has no internal definition. New syscall?\n", symbol->name);
+
+        if ( s->filter && ( !symbol || !g_hash_table_contains(s->filter, symbol->name) ) )
+        {
+            PRINT_DEBUG("Syscall %s filtered out by syscalls filter file\n", symbol ? symbol->name : "<unknowm>");
+            continue;
+        }
+
+        struct wrapper *w = g_slice_new0(struct wrapper);
+        drakvuf_trap_t* trap = g_slice_new0(drakvuf_trap_t);
+
+        w->num = syscall_num;
+        w->s = s;
+        w->type = ntos ? "nt" : "win32k";
+        w->sc = definition;
+
+        trap->breakpoint.lookup_type = LOOKUP_DTB;
+        trap->breakpoint.dtb = cr3;
+        trap->breakpoint.addr_type = ADDR_VA;
+        trap->breakpoint.addr = syscall_va;
+        trap->type = BREAKPOINT;
+        trap->cb = syscall_cb;
+        trap->data = w;
 
         if ( drakvuf_add_trap(drakvuf, trap) )
             s->traps = g_slist_prepend(s->traps, trap);
@@ -353,17 +363,17 @@ static bool trap_syscall_table_entries(drakvuf_t drakvuf, vmi_instance_t vmi, sy
 
 void setup_windows(drakvuf_t drakvuf, syscalls *s)
 {
-    vmi_lock_guard lg(drakvuf);
+    auto vmi = vmi_lock_guard(drakvuf);
 
     addr_t start = 0;
 
-    if ( s->pm == VMI_PM_IA32E )
+    if ( !s->is32bit )
     {
         if ( !drakvuf_get_kernel_symbol_rva(drakvuf, "KiSystemServiceStart", &start) )
             throw -1;
 
         system_service_table_x64 sst[2] = {};
-        if ( VMI_FAILURE == vmi_read_ksym(lg.vmi, "KeServiceDescriptorTableShadow", 2*sizeof(system_service_table_x64), (void*)&sst, NULL) )
+        if ( VMI_FAILURE == vmi_read_ksym(vmi, "KeServiceDescriptorTableShadow", 2*sizeof(system_service_table_x64), (void*)&sst, NULL) )
             throw -1;
 
         s->sst[0][0] = sst[0].ServiceTable;
@@ -375,7 +385,7 @@ void setup_windows(drakvuf_t drakvuf, syscalls *s)
             throw -1;
 
         system_service_table_x86 sst[2] = {};
-        if ( VMI_FAILURE == vmi_read_ksym(lg.vmi, "KeServiceDescriptorTableShadow", 2*sizeof(system_service_table_x86), (void*)&sst, NULL) )
+        if ( VMI_FAILURE == vmi_read_ksym(vmi, "KeServiceDescriptorTableShadow", 2*sizeof(system_service_table_x86), (void*)&sst, NULL) )
             throw -1;
 
         s->sst[0][0] = sst[0].ServiceTable;
@@ -387,12 +397,12 @@ void setup_windows(drakvuf_t drakvuf, syscalls *s)
     start += s->kernel_base;
 
     addr_t dtb;
-    if ( VMI_FAILURE == vmi_pid_to_dtb(lg.vmi, 0, &dtb) )
+    if ( VMI_FAILURE == vmi_pid_to_dtb(vmi, 0, &dtb) )
         throw -1;
 
 #ifdef DRAKVUF_DEBUG
     uint16_t ntbuild;
-    if ( VMI_FAILURE == vmi_read_16_ksym(lg.vmi, "NtBuildNumber", &ntbuild) )
+    if ( VMI_FAILURE == vmi_read_16_ksym(vmi, "NtBuildNumber", &ntbuild) )
         throw -1;
 
     PRINT_DEBUG("Kernel base: 0x%lx\n", s->kernel_base);
@@ -403,7 +413,7 @@ void setup_windows(drakvuf_t drakvuf, syscalls *s)
     PRINT_DEBUG("Windows syscall entry: 0x%lx\n", start);
 #endif
 
-    if ( !trap_syscall_table_entries(drakvuf, lg.vmi, s, dtb, true, s->kernel_base, (addr_t*)&s->sst[0]) )
+    if ( !trap_syscall_table_entries(drakvuf, vmi, s, dtb, true, s->kernel_base, (addr_t*)&s->sst[0]) )
     {
         PRINT_DEBUG("Failed to trap NT syscall table entries\n");
         throw -1;
@@ -416,7 +426,7 @@ void setup_windows(drakvuf_t drakvuf, syscalls *s)
     }
 
     addr_t modlist;
-    if ( VMI_FAILURE == vmi_read_addr_ksym(lg.vmi, "PsLoadedModuleList", &modlist) )
+    if ( VMI_FAILURE == vmi_read_addr_ksym(vmi, "PsLoadedModuleList", &modlist) )
     {
         PRINT_DEBUG("Couldn't read PsLoadedModuleList\n");
         throw -1;
@@ -443,7 +453,7 @@ void setup_windows(drakvuf_t drakvuf, syscalls *s)
 
     PRINT_DEBUG("Found explorer.exe @ 0x%lx. DTB: 0x%lx\n", explorer, dtb);
 
-    if ( !trap_syscall_table_entries(drakvuf, lg.vmi, s, dtb, false, s->win32k_base, (addr_t*)&s->sst[1]) )
+    if ( !trap_syscall_table_entries(drakvuf, vmi, s, dtb, false, s->win32k_base, (addr_t*)&s->sst[1]) )
     {
         PRINT_DEBUG("Failed to trap win32k syscall entries\n");
         throw -1;
