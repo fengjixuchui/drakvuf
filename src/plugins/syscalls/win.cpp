@@ -134,7 +134,7 @@ static event_response_t ret_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
     if (!exit_status_str)
         exit_status_str = ntstatus_format_string(ntstatus_t(info->regs->rax), exit_status_buf, sizeof(exit_status_buf));
 
-    print_header(s->format, drakvuf, false, info, w->num, info->trap->breakpoint.module, sc, info->regs->rax, exit_status_str);
+    print_header(s->format, drakvuf, VMI_OS_WINDOWS, false, info, w->num, info->trap->breakpoint.module, sc, info->regs->rax, exit_status_str);
     print_footer(s->format, 0, false);
 
     drakvuf_remove_trap(drakvuf, info->trap, (drakvuf_trap_free_t)free_trap);
@@ -145,7 +145,7 @@ static event_response_t ret_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 
 static event_response_t syscall_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
-    vmi_lock_guard lg(drakvuf);
+    auto vmi = vmi_lock_guard(drakvuf);
     struct wrapper *w = (struct wrapper*)info->trap->data;
     const syscall_t *sc = w->sc;
     syscalls *s = w->s;
@@ -178,7 +178,7 @@ static event_response_t syscall_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
             // multiply num args by 4 for 32 bit systems to get the number of bytes we need
             // to read from the stack.  assumes standard calling convention (cdecl) for the
             // visual studio compile.
-            if ( VMI_FAILURE == vmi_read(lg.vmi, &ctx, size, buf, NULL) )
+            if ( VMI_FAILURE == vmi_read(vmi, &ctx, size, buf, NULL) )
                 nargs = 0;
         }
         else
@@ -198,13 +198,13 @@ static event_response_t syscall_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
                 // first 4 agrs passed via rcx, rdx, r8, and r9
                 ctx.addr = info->regs->rsp+0x28;  // jump over homing space + base pointer
                 size_t sp_size = s->reg_size * (nargs-4);
-                if ( VMI_FAILURE == vmi_read(lg.vmi, &ctx, sp_size, &(buf64[4]), NULL) )
+                if ( VMI_FAILURE == vmi_read(vmi, &ctx, sp_size, &(buf64[4]), NULL) )
                     nargs = 0;
             }
         }
     }
 
-    print_header(s->format, drakvuf, true, info, w->num, w->type, sc, 0, NULL);
+    print_header(s->format, drakvuf, VMI_OS_WINDOWS, true, info, w->num, w->type, sc, 0, NULL);
     if ( nargs )
     {
         print_nargs(s->format, nargs);
@@ -213,8 +213,11 @@ static event_response_t syscall_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
     print_footer(s->format, nargs, true);
     g_free(buf);
 
+    if ( s->disable_sysret )
+        return 0;
+
     addr_t ret = 0;
-    if ( VMI_FAILURE == vmi_read_addr_va(lg.vmi, info->regs->rsp, 0, &ret) )
+    if ( VMI_FAILURE == vmi_read_addr_va(vmi, info->regs->rsp, 0, &ret) )
         return 0;
 
     drakvuf_trap_t *ret_trap = g_slice_new0(drakvuf_trap_t);
