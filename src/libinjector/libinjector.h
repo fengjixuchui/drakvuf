@@ -165,6 +165,7 @@ typedef enum
     STATUS_READ_FILE_OK,
     STATUS_WRITE_FILE_OK,
     STATUS_CLOSE_FILE_OK,
+    STATUS_GET_LAST_ERROR,
     __STATUS_MAX
 } status_type_t;
 
@@ -192,13 +193,13 @@ void init_unicode_argument(struct argument* arg,
     init_argument((arg), ARGUMENT_STRUCT, sizeof((sv)), (void*)&(sv))
 
 bool setup_stack(drakvuf_t drakvuf,
-                 drakvuf_trap_info_t* info,
+                 x86_registers_t *regs,
                  struct argument args[],
                  int nb_args) NOEXCEPT;
 
 bool setup_stack_locked(drakvuf_t drakvuf,
                         vmi_instance_t vmi,
-                        drakvuf_trap_info_t* info,
+                        x86_registers_t *regs,
                         struct argument args[],
                         int nb_args) NOEXCEPT;
 
