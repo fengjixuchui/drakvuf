@@ -138,14 +138,14 @@ static event_response_t usermode_return_hook_cb(drakvuf_t drakvuf, drakvuf_trap_
     if(!strcmp(info->trap->name, "CryptGenKey"))
         extra_data = CryptGenKey_hook(drakvuf, info, ret_target->arguments);
 
-    std::vector<fmt::Qstr<std::string>> fmt_args{};
+    std::vector<fmt::Rstr<std::string>> fmt_args{};
     {
         const auto &args = ret_target->arguments;
         const auto &printers = ret_target->argument_printers;
         for (auto [arg, printer] = std::tuple(std::cbegin(args), std::cbegin(printers));
              arg != std::cend(args) && printer != std::cend(printers);
              ++arg, ++printer) {
-            fmt_args.push_back(fmt::Qstr((*printer)->print(drakvuf, info, *arg)));
+            fmt_args.push_back(fmt::Rstr((*printer)->print(drakvuf, info, *arg)));
         }
     }
 
@@ -156,8 +156,6 @@ static event_response_t usermode_return_hook_cb(drakvuf_t drakvuf, drakvuf_trap_
 
     fmt::print(plugin->m_output_format, "apimon", drakvuf, info,
         keyval("Event", fmt::Qstr("api_called")),
-        keyval("ProcessName", fmt::Qstr(info->proc_data.name)),
-        keyval("Method", fmt::Qstr(info->trap->name)),
         keyval("CalledFrom", fmt::Xval(info->regs->rip)),
         keyval("ReturnValue", fmt::Xval(info->regs->rax)),
         keyval("Arguments", fmt_args),
