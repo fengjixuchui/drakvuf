@@ -193,6 +193,7 @@ typedef struct drakvuf_trap_info
     addr_t trap_pa;
     x86_registers_t* regs;
     drakvuf_trap_t* trap;
+    uint64_t event_uid; /* Unique sequential event identifier */
     union
     {
         const cpuid_event_t* cpuid; /* For CPUID traps */
@@ -605,7 +606,11 @@ addr_t drakvuf_get_function_argument(drakvuf_t drakvuf,
 bool drakvuf_get_pid_from_handle(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t handle, vmi_pid_t* pid) NOEXCEPT;
 bool drakvuf_get_tid_from_handle(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t handle, uint32_t* tid) NOEXCEPT;
 
-bool drakvuf_set_vcpu_gprs(drakvuf_t drakvuf, int vcpu, registers_t *regs) NOEXCEPT;
+bool drakvuf_set_vcpu_gprs(drakvuf_t drakvuf, unsigned int vcpu, registers_t *regs) NOEXCEPT;
+
+bool drakvuf_enable_ipt(drakvuf_t drakvuf, unsigned int vcpu, uint8_t** buf, uint64_t* size);
+bool drakvuf_get_ipt_offset(drakvuf_t drakvuf, unsigned int vcpu, uint64_t* offset, uint64_t* last_offset);
+bool drakvuf_disable_ipt(drakvuf_t drakvuf, unsigned int vcpu);
 
 /*---------------------------------------------------------
  * Event FD functions

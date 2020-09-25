@@ -405,6 +405,9 @@ event_response_t pre_mem_cb(vmi_instance_t vmi, vmi_event_t* event)
     trap_info.attached_proc_data.userid    = attached_proc_data.userid;
     trap_info.attached_proc_data.tid       = attached_proc_data.tid;
 
+    if (s->traps)
+        trap_info.event_uid = ++drakvuf->event_counter;
+
     GSList* loop = s->traps;
     drakvuf->in_callback = 1;
     while (loop)
@@ -617,6 +620,9 @@ event_response_t int3_cb(vmi_instance_t vmi, vmi_event_t* event)
     trap_info.attached_proc_data.ppid      = attached_proc_data.ppid;
     trap_info.attached_proc_data.userid    = attached_proc_data.userid;
     trap_info.attached_proc_data.tid       = attached_proc_data.tid;
+
+    if (s->traps)
+        trap_info.event_uid = ++drakvuf->event_counter;
 
     drakvuf->in_callback = 1;
     GSList* lists[2] = {drakvuf->catchall_breakpoint, s->traps};
@@ -1514,9 +1520,9 @@ bool init_vmi(drakvuf_t drakvuf, bool libvmi_conf, bool fast_singlestep)
     unsigned int i;
     /*
      * Setup singlestep event handlers but don't turn on MTF.
-     * Max 16 CPUs!
+     * Max MAX_DRAKVUF_VCPU CPUs!
      */
-    for (i = 0; i < drakvuf->vcpus && i < 16; i++)
+    for (i = 0; i < drakvuf->vcpus && i < MAX_DRAKVUF_VCPU; i++)
     {
         drakvuf->step_event[i] = (vmi_event_t*)g_try_malloc0(sizeof(vmi_event_t));
         if ( !drakvuf->step_event[i] )
