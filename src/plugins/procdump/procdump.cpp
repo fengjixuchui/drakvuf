@@ -321,6 +321,8 @@ static enum rtlcopy_status dump_with_rtlcopymemory(drakvuf_t drakvuf,
             ctx->writer->append(zeros, VMI_PS_4KB);
 
         vad->second.idx += ptes_to_dump;
+        skip = max_contigious_range(prototype_ptes, total_number_of_ptes,
+                                    vad->second.idx, ptes_to_dump, ctx->POOL_SIZE_IN_PAGES);
 
         if (0 == ptes_to_dump)
         {
@@ -721,7 +723,7 @@ static bool prepare_mdmp_header(drakvuf_t drakvuf, drakvuf_trap_info_t* info, pr
         if (VAD_TYPE_DLL != vad.second.type)
         {
             struct mdmp_memory_descriptor64 range(vad.first,
-                    vad.second.total_number_of_ptes * VMI_PS_4KB);
+                                                  vad.second.total_number_of_ptes * VMI_PS_4KB);
             memory_ranges.push_back(range);
         }
     }
@@ -730,7 +732,7 @@ static bool prepare_mdmp_header(drakvuf_t drakvuf, drakvuf_trap_info_t* info, pr
         if (VAD_TYPE_DLL == vad.second.type)
         {
             struct mdmp_memory_descriptor64 range(vad.first,
-                    vad.second.total_number_of_ptes * VMI_PS_4KB);
+                                                  vad.second.total_number_of_ptes * VMI_PS_4KB);
             memory_ranges.push_back(range);
         }
     }
@@ -837,6 +839,27 @@ static event_response_t terminate_process_cb(drakvuf_t drakvuf,
                     info->proc_data.pid, info->proc_data.tid);
         return VMI_EVENT_RESPONSE_NONE;
     }
+
+    uint32_t handle = 0;
+    bool is32bit = (drakvuf_get_page_mode(drakvuf) != VMI_PM_IA32E);
+    if (is32bit)
+    {
+        access_context_t ctx = {
+            .translate_mechanism = VMI_TM_PROCESS_DTB,
+            .dtb = info->regs->cr3,
+            .addr = info->regs->rsp + 4
+        };
+        vmi_lock_guard vmi(drakvuf);
+        vmi_read_32(vmi, &ctx, &handle);
+    }
+    else
+    {
+        handle = info->regs->rcx;
+    }
+
+    // If current process terminates other one we should not dump current
+    if (0 != handle && 0xffffffff != handle)
+        return VMI_EVENT_RESPONSE_NONE;
 
     auto plugin = get_trap_plugin<procdump>(info);
     if (!plugin)
