@@ -112,10 +112,12 @@
 #include <unistd.h>
 #include <glib.h>
 #include <exception>
+#include <memory>
 
 #include "drakvuf.h"
+#include "exitcodes.h"
 
-static drakvuf_c* drakvuf;
+static std::unique_ptr<drakvuf_c> drakvuf;
 
 void close_handler(int signal)
 {
@@ -166,6 +168,8 @@ static void print_usage()
             "\t -g                        Search required for injection functions in all processes\n"
             "\t -j, --injection-timeout <seconds>\n"
             "\t                           Injection timeout (in seconds, 0 == no timeout)\n"
+            "\t --terminate               Terminate injected process\n"
+            "\t --termination-timeout     Timeout to wait for process termination (in seconds)\n"
             "\t -t <timeout>              Timeout (in seconds)\n"
             "\t -o <format>               Output format (default, csv, kv, or json)\n"
             "\t -x <plugin>               Don't activate the specified plugin\n"
@@ -254,7 +258,6 @@ static void print_usage()
 int main(int argc, char** argv)
 {
     int c;
-    int rc = 1;
     int timeout = 0;
     char const* inject_file = nullptr;
     char const* inject_cwd = nullptr;
@@ -276,10 +279,13 @@ int main(int argc, char** argv)
     bool libvmi_conf = false;
     bool fast_singlestep = false;
     addr_t kpgd = 0;
-    plugins_options options = {};
+    auto terminated_processes = std::make_shared<std::unordered_map<vmi_pid_t, bool>>();
+    plugins_options options = { .terminated_processes = terminated_processes };
     bool disabled_all = false; // Used to disable all plugin once
     const char* args[10] = {};
     int args_count = 0;
+    bool terminate = false;
+    int termination_timeout = 20;
 
     eprint_current_time();
 
@@ -290,7 +296,7 @@ int main(int argc, char** argv)
     {
         eprint_current_time();
         fprintf(stderr, "No plugins have been enabled, nothing to do!\n");
-        return rc;
+        return drakvuf_exit_code_t::FAIL;
     }
 
     int long_index = 0;
@@ -314,6 +320,8 @@ int main(int argc, char** argv)
         opt_json_mscorwks,
         opt_disable_sysret,
         opt_userhook_no_addr,
+        opt_terminate,
+        opt_termination_timeout,
     };
     const option long_opts[] =
     {
@@ -329,6 +337,8 @@ int main(int argc, char** argv)
         {"json-iphlpapi", required_argument, NULL, opt_json_iphlpapi},
         {"json-mpr", required_argument, NULL, opt_json_mpr},
         {"injection-timeout", required_argument, NULL, 'j'},
+        {"terminate", no_argument, NULL, opt_terminate},
+        {"termination-timeout", required_argument, NULL, opt_termination_timeout},
         {"verbose", no_argument, NULL, 'v'},
         {"help", no_argument, NULL, 'h'},
         {"json-ole32", required_argument, NULL, opt_json_ole32},
@@ -375,6 +385,12 @@ int main(int argc, char** argv)
             case 'j':
                 injection_timeout = atoi(optarg);
                 break;
+            case opt_terminate:
+                terminate = true;
+                break;
+            case opt_termination_timeout:
+                termination_timeout = atoi(optarg);
+                break;
             case 'm':
                 if (!strncmp(optarg, "shellexec", 9))
                     injection_method = INJECT_METHOD_SHELLEXEC;
@@ -388,7 +404,7 @@ int main(int argc, char** argv)
 #else
                 {
                     fprintf(stderr, "Doppelganging is not available, you need to re-run ./configure!\n");
-                    return rc;
+                    return drakvuf_exit_code_t::FAIL;
                 }
 #endif
                 if (!strncmp(optarg, "execproc", 8))
@@ -533,43 +549,43 @@ int main(int argc, char** argv)
 #endif
             case 'h':
                 print_usage();
-                return 0;
+                return drakvuf_exit_code_t::SUCCESS;
             default:
                 if (isalnum(c))
                     fprintf(stderr, "Unrecognized option: %c\n", c);
                 else
                     fprintf(stderr, "Unrecognized option: %s\n", long_opts[long_index].name);
-                return rc;
+                return drakvuf_exit_code_t::FAIL;
         }
 
     if (!domain)
     {
         fprintf(stderr, "No domain name specified (-d)!\n");
-        return rc;
+        return drakvuf_exit_code_t::FAIL;
     }
 
     if (!json_kernel_path)
     {
         fprintf(stderr, "No kernel JSON profile specified (-r)!\n");
-        return rc;
+        return drakvuf_exit_code_t::FAIL;
     }
 
     if (INJECT_METHOD_DOPP == injection_method && (!binary_path || !target_process))
     {
         fprintf(stderr, "Missing parameters for process doppelganging injection (-B and -P)!\n");
-        return rc;
+        return drakvuf_exit_code_t::FAIL;
     }
 
     PRINT_DEBUG("Starting DRAKVUF initialization\n");
 
     try
     {
-        drakvuf = new drakvuf_c(domain, json_kernel_path, json_wow_path, output, verbose, leave_paused, libvmi_conf, kpgd, fast_singlestep);
+        drakvuf = std::make_unique<drakvuf_c>(domain, json_kernel_path, json_wow_path, output, verbose, leave_paused, libvmi_conf, kpgd, fast_singlestep);
     }
     catch (const std::exception& e)
     {
         fprintf(stderr, "Failed to initialize DRAKVUF: %s\n", e.what());
-        return rc;
+        return drakvuf_exit_code_t::FAIL;
     }
 
     PRINT_DEBUG("DRAKVUF initializated\n");
@@ -583,36 +599,38 @@ int main(int argc, char** argv)
     sigaction(SIGINT, &act, nullptr);
     sigaction(SIGALRM, &act, nullptr);
 
+    vmi_pid_t injected_pid = 0;
     if (injection_pid > 0 && inject_file)
     {
         PRINT_DEBUG("Starting injection with PID %i(%i) for %s\n", injection_pid, injection_thread, inject_file);
-        injector_status_t ret = drakvuf->inject_cmd(injection_pid, injection_thread, inject_file, inject_cwd, injection_method, output, binary_path, target_process, injection_timeout, injection_global_search, args_count, args);
+        injector_status_t ret = drakvuf->inject_cmd(injection_pid, injection_thread, inject_file, inject_cwd, injection_method, output, binary_path, target_process, injection_timeout, injection_global_search, args_count, args, &injected_pid);
         switch (ret)
         {
             case INJECTOR_FAILED_WITH_ERROR_CODE:
-                rc = 0;
+                return drakvuf_exit_code_t::SUCCESS;
             case INJECTOR_FAILED:
-                goto exit;
+                return drakvuf_exit_code_t::FAIL;
             case INJECTOR_SUCCEEDED:
-            default:
                 break;
+            case INJECTOR_TIMEOUTED:
+                return drakvuf_exit_code_t::INJECTION_TIMEOUT;
         }
     }
 
     PRINT_DEBUG("Starting plugins\n");
 
     if (drakvuf->start_plugins(plugin_list, &options) < 0)
-        goto exit;
+        return drakvuf_exit_code_t::FAIL;
 
     PRINT_DEBUG("Beginning DRAKVUF loop\n");
 
     /* Start the event listener */
     drakvuf->loop(timeout);
-    rc = 0;
+
+    if (terminate && injected_pid)
+        drakvuf->terminate(injection_pid, injection_thread, injected_pid, termination_timeout, terminated_processes);
 
     PRINT_DEBUG("Finished DRAKVUF loop\n");
 
-exit:
-    delete drakvuf;
-    return rc;
+    return drakvuf_exit_code_t::SUCCESS;
 }

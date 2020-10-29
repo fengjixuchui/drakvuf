@@ -507,7 +507,9 @@ static event_response_t detach(drakvuf_t drakvuf, drakvuf_trap_info_t* info,
 
     restore_registers(info, ctx);
     free_pool(ctx->plugin->pools, ctx->pool);
+    // TODO Check if this would be erased
     ctx->plugin->terminating.at(ctx->pid) = 0;
+    ctx->plugin->terminated_processes->insert_or_assign(ctx->pid, true);
     if (ctx->bp)
     {
         ctx->plugin->traps = g_slist_remove(ctx->plugin->traps, ctx->bp);
@@ -705,8 +707,6 @@ static bool dump_mmvad(drakvuf_t drakvuf, mmvad_info_t* mmvad,
 static bool prepare_mdmp_header(drakvuf_t drakvuf, drakvuf_trap_info_t* info, procdump_ctx* ctx)
 {
     auto plugin = get_trap_plugin<procdump>(info);
-    if (!plugin)
-        return false;
 
     uint32_t time_stamp = g_get_real_time() / G_USEC_PER_SEC;
 
@@ -863,10 +863,6 @@ static event_response_t terminate_process_cb(drakvuf_t drakvuf,
         return VMI_EVENT_RESPONSE_NONE;
 
     auto plugin = get_trap_plugin<procdump>(info);
-    if (!plugin)
-    {
-        return VMI_EVENT_RESPONSE_NONE;
-    }
 
     // The callback could be called if other thread invokes NtTerminateProcess
     // or as a return path from injected function.
@@ -875,12 +871,19 @@ static event_response_t terminate_process_cb(drakvuf_t drakvuf,
     if (it != plugin->terminating.end())
     {
         if (!it->second)
+        {
+            // TODO Check if this line could be reached (look "detach" function)
             plugin->terminating.erase(info->attached_proc_data.pid);
+            plugin->terminated_processes->insert_or_assign(info->attached_proc_data.pid, true);
+        }
 
         return VMI_EVENT_RESPONSE_NONE;
     }
     else
+    {
         plugin->terminating[info->attached_proc_data.pid] = info->attached_proc_data.tid;
+        plugin->terminated_processes->insert_or_assign(info->attached_proc_data.pid, false);
+    }
 
     // TODO Move into constructor
     auto ctx = new procdump_ctx;
@@ -985,6 +988,7 @@ static addr_t get_function_va(drakvuf_t drakvuf, const char* lib,
 procdump::procdump(drakvuf_t drakvuf, const procdump_config* config,
                    output_format_t output)
     : pluginex(drakvuf, output)
+    , terminated_processes(config->terminated_processes)
     , procdump_dir{config->procdump_dir ?: ""}
     , use_compression{config->compress_procdumps}
     , traps(nullptr)
@@ -1029,12 +1033,8 @@ procdump::procdump(drakvuf_t drakvuf, const procdump_config* config,
     __cpuid(0x80000001, r0, amd_extended_cpu_features, r1, r2);
 
     breakpoint_in_system_process_searcher bp;
-    if (!register_trap<procdump>(
-            drakvuf, nullptr, this, terminate_process_cb,
-            bp.for_syscall_name("NtTerminateProcess")))
-    {
+    if (!register_trap(nullptr, terminate_process_cb, bp.for_syscall_name("NtTerminateProcess")))
         throw -1;
-    }
 }
 
 procdump::~procdump()
