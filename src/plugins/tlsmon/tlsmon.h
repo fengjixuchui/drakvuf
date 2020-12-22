@@ -102,99 +102,36 @@
  *                                                                         *
  ***************************************************************************/
 
-#ifndef WIN_H
-#define WIN_H
+/**
+ * General Tlsmon plugin description:
+ * This plugin extracts TLS secrets and logs them in a format:
+ * <CLIENT_RANDOM><MASTER_KEY>
+ * recognizable by wireshark. This format allows the data to be easily loaded
+ * into wireshark and automatically decrypted.
+ *
+ * Currently supported:
+ * - extracting secrets from communication based on Schannel.
+ */
 
-#include <libvmi/libvmi.h>
-#include "libdrakvuf.h"
-#include "os.h"
-#include "win-exports.h"
+#ifndef TLSMON_H
+#define TLSMON_H
 
-addr_t win_get_current_thread(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
+#include <vector>
 
-addr_t win_get_current_thread_teb(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
+#include <libusermode/userhook.hpp>
+#include "plugins/private.h"
+#include "plugins/plugins_ex.h"
 
-addr_t win_get_current_thread_stackbase(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
 
-addr_t win_get_current_process(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
+class tlsmon: public pluginex
+{
+public:
+    tlsmon(drakvuf_t drakvuf, output_format_t output);
+    ~tlsmon();
 
-addr_t win_get_current_attached_process(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
+private:
+    void hook_lsass(drakvuf_t drakvuf);
+};
 
-bool win_get_last_error(drakvuf_t drakvuf, drakvuf_trap_info_t* info, uint32_t* err, const char** err_str);
-
-char* win_get_process_name(drakvuf_t drakvuf, addr_t eprocess_base, bool fullpath);
-
-char* win_get_process_commandline(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t eprocess_base);
-
-bool win_get_process_pid(drakvuf_t drakvuf, addr_t eprocess_base, int32_t* pid);
-
-char* win_get_current_process_name(drakvuf_t drakvuf, drakvuf_trap_info_t* info, bool fullpath);
-
-int64_t win_get_process_userid(drakvuf_t drakvuf, addr_t eprocess_base);
-
-unicode_string_t* win_get_process_csdversion(drakvuf_t drakvuf, addr_t eprocess_base);
-
-int64_t win_get_current_process_userid(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
-
-bool win_get_process_dtb(drakvuf_t drakvuf, addr_t process_base, addr_t* dtb);
-
-bool win_get_current_thread_id(drakvuf_t drakvuf, drakvuf_trap_info_t* info, uint32_t* thread_id);
-
-bool win_get_thread_previous_mode(drakvuf_t drakvuf, addr_t kthread, privilege_mode_t* previous_mode);
-
-bool win_get_current_thread_previous_mode(drakvuf_t drakvuf,
-        drakvuf_trap_info_t* info,
-        privilege_mode_t* previous_mode);
-
-bool win_is_ethread(drakvuf_t drakvuf, addr_t dtb, addr_t ethread_addr);
-
-bool win_is_eprocess(drakvuf_t drakvuf, addr_t dtb, addr_t eprocess_addr);
-
-bool win_get_module_list(drakvuf_t drakvuf, addr_t eprocess_base, addr_t* module_list);
-bool win_get_module_list_wow( drakvuf_t drakvuf, access_context_t* ctx, addr_t wow_peb, addr_t* module_list );
-
-bool win_get_module_base_addr(drakvuf_t drakvuf, addr_t module_list_head, const char* module_name, addr_t* base_addr_out);
-bool win_get_module_base_addr_ctx(drakvuf_t drakvuf, addr_t module_list_head, access_context_t* ctx, const char* module_name, addr_t* base_addr_out);
-module_info_t* win_get_module_info_ctx( drakvuf_t drakvuf, addr_t module_list_head, access_context_t* ctx, const char* module_name );
-module_info_t* win_get_module_info_ctx_wow( drakvuf_t drakvuf, addr_t module_list_head, access_context_t* ctx, const char* module_name );
-
-bool win_find_eprocess(drakvuf_t drakvuf, vmi_pid_t find_pid, const char* find_procname, addr_t* eprocess_addr);
-
-bool win_enumerate_processes(drakvuf_t drakvuf, void (*visitor_func)(drakvuf_t drakvuf, addr_t eprocess, void* visitor_ctx), void* visitor_ctx);
-bool win_enumerate_processes_with_module(drakvuf_t drakvuf, const char* module_name, bool (*visitor_func)(drakvuf_t drakvuf, const module_info_t* module_info, void* visitor_ctx), void* visitor_ctx);
-
-bool win_is_crashreporter(drakvuf_t drakvuf, drakvuf_trap_info_t* info, vmi_pid_t* pid);
-
-bool win_get_process_ppid( drakvuf_t drakvuf, addr_t process_base, int32_t* ppid );
-
-bool win_get_process_data( drakvuf_t drakvuf, addr_t process_base, proc_data_priv_t* proc_data );
-
-gchar* win_reg_keyhandle_path( drakvuf_t drakvuf, drakvuf_trap_info_t* info, uint64_t key_handle );
-
-char* win_get_filename_from_handle(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t handle);
-
-bool win_is_wow64(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
-
-addr_t win_get_function_argument(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t argument_number);
-addr_t win_get_function_return_address(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
-
-bool win_inject_traps_modules(drakvuf_t drakvuf, drakvuf_trap_t* trap, addr_t list_head, vmi_pid_t pid);
-
-bool win_find_mmvad(drakvuf_t drakvuf, addr_t eprocess, addr_t vaddr, mmvad_info_t* out_mmvad);
-
-bool win_traverse_mmvad(drakvuf_t drakvuf, addr_t eprocess, mmvad_callback callback, void* callback_data);
-bool win_is_mmvad_commited(drakvuf_t drakvuf, mmvad_info_t* mmvad);
-uint64_t win_mmvad_commit_charge(drakvuf_t drakvuf, mmvad_info_t* mmvad, uint64_t* width);
-uint32_t win_mmvad_type(drakvuf_t drakvuf, mmvad_info_t* mmvad);
-
-bool win_get_pid_from_handle(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t handle, vmi_pid_t* pid);
-bool win_get_tid_from_handle(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t handle, uint32_t* tid);
-
-addr_t win_get_wow_peb(drakvuf_t drakvuf, access_context_t* ctx, addr_t eprocess);
-bool win_get_wow_context(drakvuf_t drakvuf, addr_t ethread, addr_t* wow_ctx);
-bool win_get_user_stack32(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t* stack_ptr, addr_t* frame_ptr);
-bool win_get_user_stack64(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t* stack_ptr);
-
-bool win_check_return_context(drakvuf_trap_info_t* info, vmi_pid_t pid, uint32_t tid, addr_t rsp);
 
 #endif

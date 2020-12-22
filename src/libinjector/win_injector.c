@@ -181,6 +181,7 @@ struct injector
     drakvuf_trap_t bp;
     GSList* memtraps;
 
+    // Used only on x64
     size_t offsets[OFFSET_MAX];
 
     // Results:
@@ -1563,31 +1564,36 @@ static event_response_t injector_int3_cb(drakvuf_t drakvuf, drakvuf_trap_info_t*
 
             return 0;
         }
-        else
-        {
-            PRINT_DEBUG("Writing...\n");
 
-            if (!setup_write_file_stack(injector, &regs.x86, amount))
-            {
-                PRINT_DEBUG("Failed to setup stack for passing inputs!\n");
-                return 0;
-            }
+        PRINT_DEBUG("Writing...\n");
+
+        if (!setup_write_file_stack(injector, &regs.x86, amount))
+        {
+            PRINT_DEBUG("Failed to setup stack for passing inputs!\n");
+            return 0;
         }
 
-        access_context_t ctx = { 0 };
-        ctx.translate_mechanism = VMI_TM_PROCESS_DTB;
-        ctx.dtb = regs.x86.cr3;
-        ctx.addr = injector->payload_addr + FILE_BUF_RESERVED;
+        access_context_t ctx =
+        {
+            .translate_mechanism = VMI_TM_PROCESS_DTB,
+            .dtb = regs.x86.cr3,
+            .addr = injector->payload_addr + FILE_BUF_RESERVED,
+        };
+
+        vmi = drakvuf_lock_and_get_vmi(drakvuf);
+        bool success = (VMI_SUCCESS == vmi_write(vmi, &ctx, amount, buf + FILE_BUF_RESERVED, NULL));
+        drakvuf_release_vmi(drakvuf);
+
+        if (!success)
+        {
+            PRINT_DEBUG("Failed to write payload chunk!\n");
+            return 0;
+        }
 
         regs.x86.rip = injector->write_file;
 
-        vmi = drakvuf_lock_and_get_vmi(drakvuf);
-        vmi_write(vmi, &ctx, amount, buf + FILE_BUF_RESERVED, NULL);
-        drakvuf_release_vmi(drakvuf);
-
-        drakvuf_set_vcpu_gprs(drakvuf, info->vcpu, &regs);
-
         injector->status = STATUS_WRITE_FILE_OK;
+        drakvuf_set_vcpu_gprs(drakvuf, info->vcpu, &regs);
 
         return 0;
     }
@@ -1659,26 +1665,34 @@ static event_response_t injector_int3_cb(drakvuf_t drakvuf, drakvuf_trap_info_t*
             return 0;
         }
 
-        access_context_t ctx = { 0 };
-        ctx.translate_mechanism = VMI_TM_PROCESS_DTB;
-        ctx.dtb = regs.x86.cr3;
-        ctx.addr = injector->payload_addr;
+        access_context_t ctx =
+        {
+            .translate_mechanism = VMI_TM_PROCESS_DTB,
+            .dtb = regs.x86.cr3,
+            .addr = injector->payload_addr,
+        };
 
         vmi_instance_t vmi = drakvuf_lock_and_get_vmi(drakvuf);
-        vmi_read(vmi, &ctx, FILE_BUF_SIZE, buf, NULL);
+        bool success = (VMI_SUCCESS == vmi_read(vmi, &ctx, FILE_BUF_SIZE, buf, NULL));
         drakvuf_release_vmi(drakvuf);
 
-        uint32_t* num_bytes = (uint32_t*)buf;
-
-        if (*num_bytes > FILE_BUF_SIZE)
+        if (!success)
         {
-            *num_bytes = FILE_BUF_SIZE;
+            PRINT_DEBUG("Failed to read payload chunk!\n");
+            return 0;
+        }
+
+        uint32_t num_bytes = *(uint32_t*)buf;
+
+        if (num_bytes > FILE_BUF_SIZE)
+        {
+            num_bytes = FILE_BUF_SIZE;
             PRINT_DEBUG("Number of bytes read by ReadFile is greater than the buffer size, truncating.\n");
         }
 
-        fwrite(buf + FILE_BUF_RESERVED, *num_bytes, 1, injector->host_file);
+        fwrite(buf + FILE_BUF_RESERVED, num_bytes, 1, injector->host_file);
 
-        if (*num_bytes != 0)
+        if (num_bytes != 0)
         {
             if (!setup_read_file_stack(injector, &regs.x86))
             {
@@ -1702,7 +1716,6 @@ static event_response_t injector_int3_cb(drakvuf_t drakvuf, drakvuf_trap_info_t*
 
             injector->status = STATUS_CLOSE_FILE_OK;
         }
-
 
         drakvuf_set_vcpu_gprs(drakvuf, info->vcpu, &regs);
 
@@ -1905,9 +1918,6 @@ static bool inject(drakvuf_t drakvuf, injector_t injector)
 
     if (SIGDRAKVUFTIMEOUT == drakvuf_is_interrupted(drakvuf))
         injector->rc = INJECTOR_TIMEOUTED;
-
-    // Cleanup interruption flag
-    drakvuf_interrupt(drakvuf, 0);
 
     free_memtraps(injector);
 
@@ -2217,22 +2227,15 @@ static bool initialize_injector_functions(drakvuf_t drakvuf, injector_t injector
     if ( !drakvuf_find_process(drakvuf, injector->target_pid, NULL, &eprocess_base) )
         return false;
 
-    // Get the offsets from the Rekall profile
-    if (!drakvuf_get_kernel_struct_member_rva(drakvuf, "_KTHREAD", "TrapFrame", &injector->offsets[0]))
-        PRINT_DEBUG("Failed to find _KTHREAD:TrapFrame.\n");
-
-    page_mode_t pm = drakvuf_get_page_mode(drakvuf);
-    if (VMI_PM_IA32E == pm)
+    if (!injector->is32bit)
     {
-        if (!drakvuf_get_kernel_struct_member_rva(drakvuf, "_KTRAP_FRAME", "Rip", &injector->offsets[1]))
+        // Get the offsets from the Rekall profile
+        if (!drakvuf_get_kernel_struct_member_rva(drakvuf, "_KTHREAD", "TrapFrame", &injector->offsets[KTHREAD_TRAPFRAME]))
+            PRINT_DEBUG("Failed to find _KTHREAD:TrapFrame.\n");
+
+        if (!drakvuf_get_kernel_struct_member_rva(drakvuf, "_KTRAP_FRAME", "Rip", &injector->offsets[KTRAP_FRAME_RIP]))
             PRINT_DEBUG("Failed to find _KTRAP_FRAME:Rip.\n");
     }
-    else
-    {
-        if (!drakvuf_get_kernel_struct_member_rva(drakvuf, "_KTRAP_FRAME", "Eip", &injector->offsets[1]))
-            PRINT_DEBUG("Failed to find _KTRAP_FRAME:Eip.\n");
-    }
-
 
     if (INJECT_METHOD_CREATEPROC == injector->method)
     {
@@ -2447,6 +2450,7 @@ void injector_terminate_on_win(drakvuf_t drakvuf,
     injector->drakvuf = drakvuf;
     injector->target_pid = injection_pid;
     injector->target_tid = injection_tid;
+    injector->is32bit = (drakvuf_get_page_mode(drakvuf) != VMI_PM_IA32E);
     injector->terminate_pid = pid;
     injector->status = STATUS_NULL;
 

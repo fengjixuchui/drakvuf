@@ -155,7 +155,7 @@ struct plugin_target_config_entry_t
     std::vector< std::unique_ptr< ArgumentPrinter > > argument_printers;
 
     plugin_target_config_entry_t()
-        : dll_name(), function_name(), offset(), actions(), argument_printers()
+        : dll_name(), type(), function_name(), offset(), actions(), argument_printers()
     {}
 
     plugin_target_config_entry_t(std::string&& dll_name, std::string&& function_name, addr_t offset, HookActions hook_actions, std::vector< std::unique_ptr< ArgumentPrinter > >&& argument_printers)
@@ -200,14 +200,18 @@ struct hook_target_entry_t
 struct return_hook_target_entry_t
 {
     vmi_pid_t pid;
+    uint32_t tid;
+    addr_t rsp;
+
     drakvuf_trap_t* trap;
     std::string clsid;
     void* plugin;
     std::vector < uint64_t > arguments;
     const std::vector < std::unique_ptr < ArgumentPrinter > >& argument_printers;
 
-    return_hook_target_entry_t(vmi_pid_t pid, std::string clsid, void* plugin, const std::vector < std::unique_ptr < ArgumentPrinter > >& argument_printers) :
-        pid(pid), trap(nullptr), clsid(clsid), plugin(plugin), argument_printers(argument_printers) {}
+    return_hook_target_entry_t(vmi_pid_t pid, uint32_t tid, addr_t rsp,
+                               std::string clsid, void* plugin, const std::vector < std::unique_ptr < ArgumentPrinter > >& argument_printers) :
+        pid(pid), tid(tid), rsp(rsp), trap(nullptr), clsid(clsid), plugin(plugin), argument_printers(argument_printers) {}
 };
 
 struct hook_target_view_t
@@ -240,16 +244,34 @@ struct usermode_cb_registration
     void* extra;
 };
 
-typedef enum usermode_reg_status
-{
-    USERMODE_REGISTER_ERROR,
-    USERMODE_REGISTER_SUCCESS,
-    USERMODE_ARCH_UNSUPPORTED,
-    USERMODE_OS_UNSUPPORTED,
-} usermode_reg_status_t;
-
-usermode_reg_status_t drakvuf_register_usermode_callback(drakvuf_t drakvuf, usermode_cb_registration* reg);
+/**
+ * Userhooks are not supported on some windows versions yet, therefore
+ * this function should be called first before using any other function
+ * from libuserhook library.
+ *
+ * @param[in] drakvuf drakvuf context
+ * @return true if userhooks are supported on this system, false otherwise.
+ */
+bool drakvuf_are_userhooks_supported(drakvuf_t drakvuf);
+void drakvuf_register_usermode_callback(drakvuf_t drakvuf, usermode_cb_registration* reg);
 bool drakvuf_request_usermode_hook(drakvuf_t drakvuf, const dll_view_t* dll, const plugin_target_config_entry_t* target, callback_t callback, void* extra);
 void drakvuf_load_dll_hook_config(drakvuf_t drakvuf, const char* dll_hooks_list_path, const bool print_no_addr, std::vector<plugin_target_config_entry_t>* wanted_hooks);
 
+
+/**
+ * Sets usermode hook on a process that already exists in the system.
+ * Note that this is rather an expensive operation, so whenever possible it is
+ * better to use drakvuf_register_usermode_callback.
+ *
+ * @param[in] drakvuf drakvuf context
+ * @param[in] target_process Base address of the process that we want to hook on.
+ * @param[in] dll_name Name of the dll library that contains func_name.
+ * @param[in] func_name Name of the function we want to hook on.
+ * @param[in] cb Callback which will get invoked when the hook is reached.
+ * @param[in] extra Additional data which will be set as trap->data.
+ */
+void drakvuf_request_userhook_on_running_process(drakvuf_t drakvuf, addr_t target_process, const std::string& dll_name, const std::string& func_name, callback_t cb, void* extra);
+
+
+void drakvuf_remove_running_trap(drakvuf_t drakvuf, drakvuf_trap_t* trap, drakvuf_trap_free_t free_routine);
 #endif

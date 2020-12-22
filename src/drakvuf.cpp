@@ -205,10 +205,15 @@ static bool is_interrupted(drakvuf_t drakvuf, void*)
     return drakvuf_is_interrupted(drakvuf);
 }
 
+int drakvuf_c::is_interrupted()
+{
+    return drakvuf_is_interrupted(drakvuf);
+}
+
 void drakvuf_c::loop(int duration)
 {
     GThread* timeout_thread = startup_timer(this, duration);
-    drakvuf_loop(drakvuf, is_interrupted, nullptr);
+    drakvuf_loop(drakvuf, ::is_interrupted, nullptr);
     cleanup_timer(this, timeout_thread);
 }
 
@@ -287,10 +292,19 @@ void drakvuf_c::terminate(vmi_pid_t injection_pid,
                           int termination_timeout,
                           std::shared_ptr<const std::unordered_map<vmi_pid_t, bool>> terminated_processes)
 {
-    if (terminated_processes->find(pid) == terminated_processes->end())
+    if (terminated_processes->find(pid) != terminated_processes->end())
+    {
+        if (terminated_processes->at(pid))
+            // the process is already completed
+            return;
+    }
+    else
         injector_terminate(drakvuf, injection_pid, injection_tid, pid);
+
     GThread* timeout_thread = startup_timer(this, termination_timeout);
+
     auto info = termination_info(terminated_processes, pid);
     drakvuf_loop(drakvuf, is_terminated, &info);
+
     cleanup_timer(this, timeout_thread);
 }

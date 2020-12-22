@@ -378,6 +378,16 @@ if test x$plugin_rpcmon = xyes; then
   AC_DEFINE_UNQUOTED(ENABLE_PLUGIN_RPCMON, 1, "")
 fi
 
+AC_ARG_ENABLE([plugin_tlsmon],
+  [AS_HELP_STRING([--disable-plugin-tlsmon],
+    [Enable the RPC call tracing plugin @<:@yes@:>@])],
+  [plugin_tlsmon="$enableval"],
+  [plugin_tlsmon="yes"])
+AM_CONDITIONAL([PLUGIN_TLSMON], [test x$plugin_tlsmon = xyes])
+if test x$plugin_tlsmon = xyes; then
+  AC_DEFINE_UNQUOTED(ENABLE_PLUGIN_TLSMON, 1, "")
+fi
+
 #####################################################
 
 AC_ARG_ENABLE([repl],
@@ -575,7 +585,8 @@ AH_VERBATIM([__STDC_FORMAT_MACROS],
 
 PKG_CHECK_MODULES([GLIB], [glib-2.0 >= 2.28], [], [AC_ERROR([glib-2.0 (version 2.28+) has to be installed!])])
 PKG_CHECK_MODULES([VMI], [libvmi >= 0.11], [], [AC_ERROR([LibVMI not found])])
-PKG_CHECK_MODULES([JSONC], [json-c], [], [AC_ERROR([libjson-c not found])])
+PKG_CHECK_MODULES([JSONC], [json-c >= 0.15], [AC_DEFINE([JSONC5], [1], [json-c5 installed])],
+    [PKG_CHECK_MODULES([JSONC], [json-c], [], [AC_ERROR([libjson-c not found])])])
 AS_IF([test x$plugin_procdump == xyes],
     [PKG_CHECK_MODULES([ZLIB],[zlib], [], [AC_ERROR([zlib not found])])])
 PKG_CHECK_MODULES([LIBXC], [xencontrol], [], [AC_ERROR([libxc not found])])
@@ -651,6 +662,7 @@ MEMDump:      $plugin_memdump
 ProcDump:     $plugin_procdump
 APIMon:       $plugin_apimon
 RPCMon:       $plugin_rpcmon
+TLSMon:       $plugin_tlsmon
 -------------------------------------------------------------------------------
 Deprecated Plugins
 WMIMon:       $plugin_wmimon

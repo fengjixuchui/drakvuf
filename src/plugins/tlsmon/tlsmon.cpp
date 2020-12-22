@@ -102,99 +102,198 @@
  *                                                                         *
  ***************************************************************************/
 
-#ifndef WIN_H
-#define WIN_H
-
+#include <inttypes.h>
 #include <libvmi/libvmi.h>
-#include "libdrakvuf.h"
-#include "os.h"
-#include "win-exports.h"
+#include <libvmi/peparse.h>
+#include <assert.h>
+#include <array>
+#include <vector>
+#include <libdrakvuf/json-util.h>
 
-addr_t win_get_current_thread(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
+#include "plugins/output_format.h"
+#include "private.h"
+#include "tlsmon.h"
 
-addr_t win_get_current_thread_teb(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
 
-addr_t win_get_current_thread_stackbase(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
 
-addr_t win_get_current_process(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
+struct ssl_generate_master_key_result_t: public call_result_t
+{
+    addr_t master_key_handle_addr;
+    addr_t parameter_list_addr;
+    ssl_generate_master_key_result_t(): call_result_t(), master_key_handle_addr(), parameter_list_addr() {}
+};
 
-addr_t win_get_current_attached_process(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
 
-bool win_get_last_error(drakvuf_t drakvuf, drakvuf_trap_info_t* info, uint32_t* err, const char** err_str);
+/**
+ * Extracts and logs 48-bytes-long master key along with client random which
+ * can be then loaded to wireshark to automatically decrypt the TLS traffic.
+ */
+static
+event_response_t ssl_generate_master_key_ret_cb(drakvuf_t drakvuf, drakvuf_trap_info* info)
+{
+    auto plugin = get_trap_plugin<tlsmon>(info);
+    auto params = get_trap_params<ssl_generate_master_key_result_t>(info);
+    if (!params->verify_result_call_params(drakvuf, info))
+        return VMI_EVENT_RESPONSE_NONE;
 
-char* win_get_process_name(drakvuf_t drakvuf, addr_t eprocess_base, bool fullpath);
+    access_context_t ctx =
+    {
+        .translate_mechanism = VMI_TM_PROCESS_DTB,
+        .dtb = info->regs->cr3,
+    };
 
-char* win_get_process_commandline(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t eprocess_base);
+    tlsmon_priv::ssl_master_secret_t master_secret;
+    std::array<char, tlsmon_priv::CLIENT_RANDOM_SZ> client_random = std::array<char, tlsmon_priv::CLIENT_RANDOM_SZ>();
+    {
+        // Lock vmi.
+        vmi_lock_guard lg(drakvuf);
+        // We first extract master key by tracing down relevant structures starting
+        // with master_key_handle.
+        addr_t ncrypt_sll_key_addr = 0;
+        ctx.addr = params->master_key_handle_addr;
+        if (VMI_SUCCESS != vmi_read_addr(lg.vmi, &ctx, &ncrypt_sll_key_addr))
+        {
+            plugin->destroy_trap(info->trap);
+            return VMI_EVENT_RESPONSE_NONE;
+        }
 
-bool win_get_process_pid(drakvuf_t drakvuf, addr_t eprocess_base, int32_t* pid);
+        // master_key_handle points to NCryptSslKey structure.
+        tlsmon_priv::ncrypt_ssl_key_t ncrypt_ssl_key;
+        ctx.addr = ncrypt_sll_key_addr;
+        if (VMI_SUCCESS != vmi_read(lg.vmi, &ctx, sizeof(ncrypt_ssl_key), &ncrypt_ssl_key, nullptr))
+        {
+            plugin->destroy_trap(info->trap);
+            return VMI_EVENT_RESPONSE_NONE;
+        }
+        // We can validate that we indeed found NCryptSslKey by checking magic
+        // bytes value.
+        if (ncrypt_ssl_key.magic != tlsmon_priv::NCRYPT_SSL_KEY_MAGIC_BYTES)
+        {
+            plugin->destroy_trap(info->trap);
+            return VMI_EVENT_RESPONSE_NONE;
+        }
 
-char* win_get_current_process_name(drakvuf_t drakvuf, drakvuf_trap_info_t* info, bool fullpath);
+        // NCryptSslKey contains a pointer to SslMasterSecret structure.
+        ctx.addr = (addr_t) ncrypt_ssl_key.master_secret;
+        if (VMI_SUCCESS != vmi_read(lg.vmi, &ctx, sizeof(master_secret), &master_secret, nullptr))
+        {
+            plugin->destroy_trap(info->trap);
+            return VMI_EVENT_RESPONSE_NONE;
+        }
+        // Again we can validate that we found SslMasterSecret structure by
+        // checking magic bytes.
+        if (master_secret.magic != tlsmon_priv::MASTER_SECRET_MAGIC_BYTES)
+        {
+            plugin->destroy_trap(info->trap);
+            return VMI_EVENT_RESPONSE_NONE;
+        }
 
-int64_t win_get_process_userid(drakvuf_t drakvuf, addr_t eprocess_base);
 
-unicode_string_t* win_get_process_csdversion(drakvuf_t drakvuf, addr_t eprocess_base);
+        // Now retrieve client random value. pParameterList points to an array of
+        // NCryptBuffer buffers which contains at least client and server random
+        // values.
+        ctx.addr = params->parameter_list_addr;
+        tlsmon_priv::ncrypt_buffer_desc_t ncrypt_buffer_desc;
+        if (VMI_SUCCESS != vmi_read(lg.vmi, &ctx, sizeof(ncrypt_buffer_desc), &ncrypt_buffer_desc, nullptr))
+        {
+            plugin->destroy_trap(info->trap);
+            return VMI_EVENT_RESPONSE_NONE;
+        }
 
-int64_t win_get_current_process_userid(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
+        std::vector<tlsmon_priv::ncrypt_buffer_t> ncrypt_buffers = std::vector<tlsmon_priv::ncrypt_buffer_t>(ncrypt_buffer_desc.cbuffers);
+        ctx.addr = (addr_t) ncrypt_buffer_desc.buffers;
+        if (VMI_SUCCESS != vmi_read(lg.vmi, &ctx, ncrypt_buffer_desc.cbuffers * sizeof(tlsmon_priv::ncrypt_buffer_t), ncrypt_buffers.data(), nullptr))
+        {
+            plugin->destroy_trap(info->trap);
+            return VMI_EVENT_RESPONSE_NONE;
+        }
 
-bool win_get_process_dtb(drakvuf_t drakvuf, addr_t process_base, addr_t* dtb);
+        // Find the buffer containing client random.
+        auto it = std::find_if(ncrypt_buffers.begin(), ncrypt_buffers.end(), [&](const auto& e)
+        {
+            return e.buffer_type == tlsmon_priv::NCRYPTBUFFER_SSL_CLIENT_RANDOM;
+        });
+        if (it == ncrypt_buffers.end())
+        {
+            plugin->destroy_trap(info->trap);
+            return VMI_EVENT_RESPONSE_NONE;
+        }
 
-bool win_get_current_thread_id(drakvuf_t drakvuf, drakvuf_trap_info_t* info, uint32_t* thread_id);
+        // And finally read it.
+        ctx.addr = (addr_t) it->buffer;
+        if (VMI_SUCCESS != vmi_read(lg.vmi, &ctx, client_random.size(), client_random.data(), nullptr))
+        {
+            plugin->destroy_trap(info->trap);
+            return VMI_EVENT_RESPONSE_NONE;
+        }
+    } // Unlock vmi.
 
-bool win_get_thread_previous_mode(drakvuf_t drakvuf, addr_t kthread, privilege_mode_t* previous_mode);
+    // Output retrieved data in hex format.
+    std::string master_key_str = tlsmon_priv::byte2str(master_secret.master_key, tlsmon_priv::MASTER_KEY_SZ);
+    std::string client_random_str = tlsmon_priv::byte2str((unsigned char*)client_random.data(), tlsmon_priv::CLIENT_RANDOM_SZ);
+    fmt::print(plugin->m_output_format, "tlsmon", drakvuf, info,
+               keyval("client_random", fmt::Qstr(client_random_str)),
+               keyval("master_key", fmt::Qstr(master_key_str))
+              );
 
-bool win_get_current_thread_previous_mode(drakvuf_t drakvuf,
-        drakvuf_trap_info_t* info,
-        privilege_mode_t* previous_mode);
+    plugin->destroy_trap(info->trap);
+    return VMI_EVENT_RESPONSE_NONE;
+}
 
-bool win_is_ethread(drakvuf_t drakvuf, addr_t dtb, addr_t ethread_addr);
 
-bool win_is_eprocess(drakvuf_t drakvuf, addr_t dtb, addr_t eprocess_addr);
+/**
+ * Sets a trap on return from SslGenerateMasterKey function to obtain the
+ * calculated master key.
+ */
+static
+event_response_t ssl_generate_master_key_cb(drakvuf_t drakvuf, drakvuf_trap_info* info)
+{
+    tlsmon* plugin = static_cast<tlsmon*>(info->trap->data);
 
-bool win_get_module_list(drakvuf_t drakvuf, addr_t eprocess_base, addr_t* module_list);
-bool win_get_module_list_wow( drakvuf_t drakvuf, access_context_t* ctx, addr_t wow_peb, addr_t* module_list );
+    auto trap = plugin->register_trap<ssl_generate_master_key_result_t>(
+                    info,
+                    ssl_generate_master_key_ret_cb,
+                    breakpoint_by_dtb_searcher(),
+                    "SslGenerateMasterKey"
+                );
+    if (!trap)
+        return VMI_EVENT_RESPONSE_NONE;
 
-bool win_get_module_base_addr(drakvuf_t drakvuf, addr_t module_list_head, const char* module_name, addr_t* base_addr_out);
-bool win_get_module_base_addr_ctx(drakvuf_t drakvuf, addr_t module_list_head, access_context_t* ctx, const char* module_name, addr_t* base_addr_out);
-module_info_t* win_get_module_info_ctx( drakvuf_t drakvuf, addr_t module_list_head, access_context_t* ctx, const char* module_name );
-module_info_t* win_get_module_info_ctx_wow( drakvuf_t drakvuf, addr_t module_list_head, access_context_t* ctx, const char* module_name );
+    auto params = get_trap_params<ssl_generate_master_key_result_t>(trap);
+    params->set_result_call_params(info);
+    params->master_key_handle_addr = drakvuf_get_function_argument(drakvuf, info, 4);
+    params->parameter_list_addr = drakvuf_get_function_argument(drakvuf, info, 7);
 
-bool win_find_eprocess(drakvuf_t drakvuf, vmi_pid_t find_pid, const char* find_procname, addr_t* eprocess_addr);
+    return VMI_EVENT_RESPONSE_NONE;
+}
 
-bool win_enumerate_processes(drakvuf_t drakvuf, void (*visitor_func)(drakvuf_t drakvuf, addr_t eprocess, void* visitor_ctx), void* visitor_ctx);
-bool win_enumerate_processes_with_module(drakvuf_t drakvuf, const char* module_name, bool (*visitor_func)(drakvuf_t drakvuf, const module_info_t* module_info, void* visitor_ctx), void* visitor_ctx);
 
-bool win_is_crashreporter(drakvuf_t drakvuf, drakvuf_trap_info_t* info, vmi_pid_t* pid);
+/**
+ * Sets a hook on running lsass process. In Windows, processes that want to
+ * establish TLS connection with Schannel API, do so by using lsass under the
+ * hood. This way, lsass will perform TLS handshake on behalf of the process
+ * initiating the connection and secrets will never leave lsass's memory.
+ */
+void tlsmon::hook_lsass(drakvuf_t drakvuf)
+{
+    addr_t lsass_base = 0;
+    if (!drakvuf_find_process(drakvuf, ~0, "lsass.exe", &lsass_base))
+        return;
+    drakvuf_request_userhook_on_running_process(drakvuf, lsass_base, "ncrypt.dll", "SslGenerateMasterKey", ssl_generate_master_key_cb, this);
+}
 
-bool win_get_process_ppid( drakvuf_t drakvuf, addr_t process_base, int32_t* ppid );
 
-bool win_get_process_data( drakvuf_t drakvuf, addr_t process_base, proc_data_priv_t* proc_data );
+tlsmon::tlsmon(drakvuf_t drakvuf, output_format_t output)
+    : pluginex(drakvuf, output)
+{
+    if (!drakvuf_are_userhooks_supported(drakvuf))
+    {
+        PRINT_DEBUG("[TLSMON] Usermode hooking not supported.\n");
+        return;
+    }
 
-gchar* win_reg_keyhandle_path( drakvuf_t drakvuf, drakvuf_trap_info_t* info, uint64_t key_handle );
+    this->hook_lsass(drakvuf);
+}
 
-char* win_get_filename_from_handle(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t handle);
 
-bool win_is_wow64(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
-
-addr_t win_get_function_argument(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t argument_number);
-addr_t win_get_function_return_address(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
-
-bool win_inject_traps_modules(drakvuf_t drakvuf, drakvuf_trap_t* trap, addr_t list_head, vmi_pid_t pid);
-
-bool win_find_mmvad(drakvuf_t drakvuf, addr_t eprocess, addr_t vaddr, mmvad_info_t* out_mmvad);
-
-bool win_traverse_mmvad(drakvuf_t drakvuf, addr_t eprocess, mmvad_callback callback, void* callback_data);
-bool win_is_mmvad_commited(drakvuf_t drakvuf, mmvad_info_t* mmvad);
-uint64_t win_mmvad_commit_charge(drakvuf_t drakvuf, mmvad_info_t* mmvad, uint64_t* width);
-uint32_t win_mmvad_type(drakvuf_t drakvuf, mmvad_info_t* mmvad);
-
-bool win_get_pid_from_handle(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t handle, vmi_pid_t* pid);
-bool win_get_tid_from_handle(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t handle, uint32_t* tid);
-
-addr_t win_get_wow_peb(drakvuf_t drakvuf, access_context_t* ctx, addr_t eprocess);
-bool win_get_wow_context(drakvuf_t drakvuf, addr_t ethread, addr_t* wow_ctx);
-bool win_get_user_stack32(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t* stack_ptr, addr_t* frame_ptr);
-bool win_get_user_stack64(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t* stack_ptr);
-
-bool win_check_return_context(drakvuf_trap_info_t* info, vmi_pid_t pid, uint32_t tid, addr_t rsp);
-
-#endif
+tlsmon::~tlsmon() {}

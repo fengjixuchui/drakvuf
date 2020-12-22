@@ -267,6 +267,13 @@ endif
 if PLUGIN_RPCMON
 sources += rpcmon/rpcmon.cpp
 sources += rpcmon/rpcmon.h
+sources += rpcmon/private.h
+endif
+
+if PLUGIN_TLSMON
+sources += tlsmon/tlsmon.cpp
+sources += tlsmon/tlsmon.h
+sources += tlsmon/private.h
 endif
 
 ###############################################################################

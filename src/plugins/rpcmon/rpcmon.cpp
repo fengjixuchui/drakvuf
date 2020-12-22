@@ -107,11 +107,12 @@
 #include <inttypes.h>
 #include <libvmi/libvmi.h>
 #include <libvmi/peparse.h>
-#include <assert.h>
 #include <libdrakvuf/json-util.h>
+#include <optional>
 
 #include "plugins/output_format.h"
 #include "rpcmon.h"
+#include "private.h"
 
 
 static void free_trap(drakvuf_trap_t* trap)
@@ -159,17 +160,159 @@ struct _MIDL_STUB_DESC
     addr_t RpcInterfaceInformation;
 } __attribute__((packed, aligned(4)));
 
+struct _MIDL_STUB_DESC_32
+{
+    uint32_t RpcInterfaceInformation;
+} __attribute__((packed, aligned(4)));
+
+struct _MIDL_STUBLESS_PROXY_INFO
+{
+    addr_t pStubDesc;
+} __attribute__((packed, aligned(4)));
+
+struct _MIDL_STUBLESS_PROXY_INFO_32
+{
+    uint32_t pStubDesc;
+} __attribute__((packed, aligned(4)));
+
+struct rpc_info_t
+{
+    std::string InterfaceIdGuid;
+    std::string TransferSyntaxGuid;
+};
+
+template<typename T>
+static std::optional<T> read_struct(vmi_instance_t vmi, access_context_t const* ctx)
+{
+    T v;
+    size_t bytes_read = 0;
+    if (VMI_SUCCESS == vmi_read(vmi, ctx, sizeof(v), &v, &bytes_read) || bytes_read != sizeof(v))
+        return v;
+    return {};
+}
+
+template<typename T>
+static std::optional<T> read_struct(vmi_instance_t vmi, drakvuf_trap_info* info, addr_t arg)
+{
+    access_context_t ctx =
+    {
+        .translate_mechanism = VMI_TM_PROCESS_DTB,
+        .dtb = info->regs->cr3,
+        .addr = arg,
+    };
+
+    return read_struct<T>(vmi, &ctx);
+}
+
+static addr_t get_rpc_interface_information_addr(drakvuf_t drakvuf, drakvuf_trap_info* info, addr_t arg)
+{
+    bool is32bit = (drakvuf_get_page_mode(drakvuf) != VMI_PM_IA32E) || drakvuf_is_wow64(drakvuf, info);
+
+    auto vmi = vmi_lock_guard(drakvuf);
+
+    if (is32bit)
+    {
+        auto s = read_struct<_MIDL_STUB_DESC_32>(vmi, info, arg);
+        if (s) return s->RpcInterfaceInformation;
+    }
+    else
+    {
+        auto s = read_struct<_MIDL_STUB_DESC>(vmi, info, arg);
+        if (s) return s->RpcInterfaceInformation;
+    }
+
+    return 0;
+}
+
+static addr_t get_rpc_proxy_info_addr(drakvuf_t drakvuf, drakvuf_trap_info* info, addr_t arg)
+{
+    bool is32bit = (drakvuf_get_page_mode(drakvuf) != VMI_PM_IA32E) || drakvuf_is_wow64(drakvuf, info);
+
+    auto vmi = vmi_lock_guard(drakvuf);
+
+    if (is32bit)
+    {
+        auto s = read_struct<_MIDL_STUBLESS_PROXY_INFO_32>(vmi, info, arg);
+        if (s) return s->pStubDesc;
+    }
+    else
+    {
+        auto s = read_struct<_MIDL_STUBLESS_PROXY_INFO>(vmi, info, arg);
+        if (s) return s->pStubDesc;
+    }
+
+    return 0;
+}
+
+static std::optional<rpc_info_t> parse_MIDL_STUB_DESC(drakvuf_t drakvuf, drakvuf_trap_info* info, addr_t arg)
+{
+    addr_t rpc_interface_information_addr = get_rpc_interface_information_addr(drakvuf, info, arg);
+    if (!rpc_interface_information_addr)
+        return {};
+
+    access_context_t ctx =
+    {
+        .translate_mechanism = VMI_TM_PROCESS_DTB,
+        .dtb = info->regs->cr3,
+        .addr = rpc_interface_information_addr,
+    };
+
+    auto vmi = vmi_lock_guard(drakvuf);
+
+    auto rpc_iface = read_struct<_RPC_CLIENT_INTERFACE>(vmi, &ctx);
+    if (!rpc_iface)
+        return {};
+
+    return {{rpc_iface->InterfaceId.SyntaxGuid.str(), rpc_iface->TransferSyntax.SyntaxGuid.str()}};
+}
+
+static std::optional<rpc_info_t> parse_MIDL_STUBLESS_PROXY_INFO(drakvuf_t drakvuf, drakvuf_trap_info* info, addr_t arg)
+{
+    addr_t rpc_proxy_info_addr = get_rpc_proxy_info_addr(drakvuf, info, arg);
+    if (!rpc_proxy_info_addr)
+        return {};
+
+    return parse_MIDL_STUB_DESC(drakvuf, info, rpc_proxy_info_addr);
+}
+
+static std::optional<uint64_t> parse_FORMAT_STRING(drakvuf_t drakvuf, drakvuf_trap_info* info, addr_t arg)
+{
+    auto vmi = vmi_lock_guard(drakvuf);
+
+    access_context_t ctx =
+    {
+        .translate_mechanism = VMI_TM_PROCESS_DTB,
+        .dtb = info->regs->cr3,
+    };
+
+    uint8_t oi_flags;
+    ctx.addr = arg + Oi_FLAGS_FIELD_OFFSET;
+    if (VMI_SUCCESS != vmi_read_8(vmi, &ctx, &oi_flags))
+        return {};
+
+    int proc_num_field_offset = (oi_flags & Oi_HAS_RPCFLAGS)
+                                ? Oi_PROCNUM_FIELD_OFFSET_WITH_RPCFLAGS
+                                : Oi_PROCNUM_FIELD_OFFSET_WITHOUT_RPCFLAGS;
+
+    uint16_t proc_num;
+    ctx.addr = arg + proc_num_field_offset;
+    if (VMI_SUCCESS != vmi_read_16(vmi, &ctx, &proc_num))
+        return {};
+
+    return proc_num;
+}
+
 static event_response_t usermode_return_hook_cb(drakvuf_t drakvuf, drakvuf_trap_info* info)
 {
     return_hook_target_entry_t* ret_target = (return_hook_target_entry_t*)info->trap->data;
 
-    // TODO check thread_id and cr3?
-    if (info->proc_data.pid != ret_target->pid)
+    if (!drakvuf_check_return_context(drakvuf, info, ret_target->pid, ret_target->tid, ret_target->rsp))
         return VMI_EVENT_RESPONSE_NONE;
 
     auto plugin = (rpcmon*)ret_target->plugin;
 
     std::vector<std::pair<std::string, fmt::Rstr<std::string>>> fmt_extra{};
+    std::vector<std::pair<std::string, fmt::Nval<uint64_t>>> fmt_extra_num;
     std::vector<fmt::Rstr<std::string>> fmt_args{};
     {
         const auto& args = ret_target->arguments;
@@ -182,25 +325,26 @@ static event_response_t usermode_return_hook_cb(drakvuf_t drakvuf, drakvuf_trap_
 
             if (std::string("pStubDescriptor") == (*printer)->get_name())
             {
-                vmi_lock_guard vmi(drakvuf);
+                auto r = parse_MIDL_STUB_DESC(drakvuf, info, *arg);
+                if (!r) continue;
 
-                size_t bytes_read = 0;
-                access_context_t ctx;
-                ctx.translate_mechanism = VMI_TM_PROCESS_DTB;
-                ctx.dtb = info->regs->cr3;
-                ctx.addr = *arg;
+                fmt_extra.push_back(std::make_pair("InterfaceId", r->InterfaceIdGuid));
+                fmt_extra.push_back(std::make_pair("TransferSyntax", r->TransferSyntaxGuid));
+            }
+            else if (std::string("pStubProxy") == (*printer)->get_name())
+            {
+                auto r = parse_MIDL_STUBLESS_PROXY_INFO(drakvuf, info, *arg);
+                if (!r) continue;
 
-                struct _MIDL_STUB_DESC stub_desc;
-                if (VMI_SUCCESS != vmi_read(vmi, &ctx, sizeof(struct _MIDL_STUB_DESC), &stub_desc, &bytes_read) || bytes_read != sizeof(struct _MIDL_STUB_DESC))
-                    continue;
+                fmt_extra.push_back(std::make_pair("InterfaceId", r->InterfaceIdGuid));
+                fmt_extra.push_back(std::make_pair("TransferSyntax", r->TransferSyntaxGuid));
+            }
+            else if (std::string("pFormat") == (*printer)->get_name())
+            {
+                auto r = parse_FORMAT_STRING(drakvuf, info, *arg);
+                if (!r) continue;
 
-                ctx.addr = stub_desc.RpcInterfaceInformation;
-                struct _RPC_CLIENT_INTERFACE rpc_iface;
-                if (VMI_SUCCESS != vmi_read(vmi, &ctx, sizeof(struct _RPC_CLIENT_INTERFACE), &rpc_iface, &bytes_read) || bytes_read != sizeof(struct _RPC_CLIENT_INTERFACE))
-                    continue;
-
-                fmt_extra.push_back(std::make_pair("InterfaceId", rpc_iface.InterfaceId.SyntaxGuid.str()));
-                fmt_extra.push_back(std::make_pair("TransferSyntax", rpc_iface.TransferSyntax.SyntaxGuid.str()));
+                fmt_extra_num.push_back(std::make_pair("ProcedureNumber", fmt::Nval(*r)));
             }
         }
     }
@@ -210,7 +354,8 @@ static event_response_t usermode_return_hook_cb(drakvuf_t drakvuf, drakvuf_trap_
                keyval("CalledFrom", fmt::Xval(info->regs->rip)),
                keyval("ReturnValue", fmt::Xval(info->regs->rax)),
                keyval("Arguments", fmt_args),
-               keyval("Extra", fmt_extra)
+               keyval("Extra", fmt_extra),
+               keyval("ExtraNum", fmt_extra_num)
               );
 
     drakvuf_remove_trap(drakvuf, info->trap, (drakvuf_trap_free_t)free_trap);
@@ -221,36 +366,22 @@ static event_response_t usermode_hook_cb(drakvuf_t drakvuf, drakvuf_trap_info* i
 {
     hook_target_entry_t* target = (hook_target_entry_t*)info->trap->data;
 
-    if (target->pid != info->proc_data.pid)
+    if (target->pid != info->attached_proc_data.pid)
         return VMI_EVENT_RESPONSE_NONE;
 
-    vmi_lock_guard lg(drakvuf);
-    vmi_v2pcache_flush(lg.vmi, info->regs->cr3);
+    auto vmi = vmi_lock_guard(drakvuf);
+    vmi_v2pcache_flush(vmi, info->regs->cr3);
 
-    bool is_syswow = drakvuf_is_wow64(drakvuf, info);
-
-    access_context_t ctx =
-    {
-        .translate_mechanism = VMI_TM_PROCESS_DTB,
-        .dtb = info->regs->cr3,
-        .addr = info->regs->rsp
-    };
-
-    bool success = false;
-    addr_t ret_addr = 0;
-
-    if (is_syswow)
-        success = (vmi_read_32(lg.vmi, &ctx, (uint32_t*)&ret_addr) == VMI_SUCCESS);
-    else
-        success = (vmi_read_64(lg.vmi, &ctx, &ret_addr) == VMI_SUCCESS);
-
-    if (!success)
+    addr_t ret_addr = drakvuf_get_function_return_address(drakvuf, info);
+    if (!ret_addr)
     {
         PRINT_DEBUG("[RPCMON-USER] Failed to read return address from the stack.\n");
         return VMI_EVENT_RESPONSE_NONE;
     }
 
-    return_hook_target_entry_t* ret_target = new (std::nothrow) return_hook_target_entry_t(target->pid, target->clsid, target->plugin, target->argument_printers);
+    return_hook_target_entry_t* ret_target = new (std::nothrow) return_hook_target_entry_t(
+        info->attached_proc_data.pid, info->attached_proc_data.tid, info->regs->rsp,
+        target->clsid, target->plugin, target->argument_printers);
 
     if (!ret_target)
     {
@@ -275,7 +406,7 @@ static event_response_t usermode_hook_cb(drakvuf_t drakvuf, drakvuf_trap_info* i
 
     addr_t paddr;
 
-    if ( VMI_SUCCESS != vmi_pagetable_lookup(lg.vmi, info->regs->cr3, ret_addr, &paddr) )
+    if ( VMI_SUCCESS != vmi_pagetable_lookup(vmi, info->regs->cr3, ret_addr, &paddr) )
     {
         delete trap;
         delete ret_target;
@@ -352,8 +483,8 @@ static void on_dll_discovered(drakvuf_t drakvuf, const dll_view_t* dll, void* ex
 {
     rpcmon* plugin = (rpcmon*)extra;
 
-    vmi_lock_guard lg(drakvuf);
-    unicode_string_t* dll_name = drakvuf_read_unicode_va(lg.vmi, dll->mmvad.file_name_ptr, 0);
+    auto vmi = vmi_lock_guard(drakvuf);
+    unicode_string_t* dll_name = drakvuf_read_unicode_va(vmi, dll->mmvad.file_name_ptr, 0);
 
     if (dll_name && dll_name->contents)
     {
@@ -377,31 +508,38 @@ static void on_dll_hooked(drakvuf_t drakvuf, const dll_view_t* dll, const std::v
     PRINT_DEBUG("[RPCMON] DLL hooked - done\n");
 }
 
+static auto rpc_call_args()
+{
+    std::vector<std::unique_ptr<ArgumentPrinter>> args;
+    args.emplace_back(std::make_unique<ArgumentPrinter>("pStubDescriptor", false));
+    args.emplace_back(std::make_unique<ArgumentPrinter>("pFormat", false));
+    return args;
+}
+
+static auto rpc_call3_args()
+{
+    std::vector<std::unique_ptr<ArgumentPrinter>> args;
+    args.emplace_back(std::make_unique<ArgumentPrinter>("pStubProxy", false));
+    args.emplace_back(std::make_unique<ArgumentPrinter>("ProcedureNumber", false, ArgumentPrinter::DECIMAL));
+    return args;
+}
+
 rpcmon::rpcmon(drakvuf_t drakvuf, output_format_t output)
     : pluginex(drakvuf, output)
 {
-    std::vector< std::unique_ptr < ArgumentPrinter > > arg_vec;
+    if (!drakvuf_are_userhooks_supported(drakvuf))
+    {
+        PRINT_DEBUG("[RPCMON] Usermode hooking not supported.\n");
+        return;
+    }
 
     const auto log = HookActions::empty().set_log();
-    arg_vec.push_back(std::unique_ptr < ArgumentPrinter>(new ArgumentPrinter("pStubDescriptor", false)));
-    arg_vec.push_back(std::unique_ptr < ArgumentPrinter>(new ArgumentPrinter("pFormat", false)));
-    wanted_hooks.emplace_back("rpcrt4.dll", "NdrAsyncClientCall", log, std::move(arg_vec));
-
-    arg_vec.push_back(std::unique_ptr < ArgumentPrinter>(new ArgumentPrinter("pStubDescriptor", false)));
-    arg_vec.push_back(std::unique_ptr < ArgumentPrinter>(new ArgumentPrinter("pFormat", false)));
-    wanted_hooks.emplace_back("rpcrt4.dll", "NdrAsyncClientCall2", log, std::move(arg_vec));
-
-    arg_vec.push_back(std::unique_ptr < ArgumentPrinter>(new ArgumentPrinter("pStubDescriptor", false)));
-    arg_vec.push_back(std::unique_ptr < ArgumentPrinter>(new ArgumentPrinter("pFormat", false)));
-    wanted_hooks.emplace_back("rpcrt4.dll", "NdrClientCall", log, std::move(arg_vec));
-
-    arg_vec.push_back(std::unique_ptr < ArgumentPrinter>(new ArgumentPrinter("pStubDescriptor", false)));
-    arg_vec.push_back(std::unique_ptr < ArgumentPrinter>(new ArgumentPrinter("pFormat", false)));
-    wanted_hooks.emplace_back("rpcrt4.dll", "NdrClientCall2", log, std::move(arg_vec));
-
-    arg_vec.push_back(std::unique_ptr < ArgumentPrinter>(new ArgumentPrinter("pStubDescriptor", false)));
-    arg_vec.push_back(std::unique_ptr < ArgumentPrinter>(new ArgumentPrinter("pFormat", false)));
-    wanted_hooks.emplace_back("rpcrt4.dll", "NdrClientCall4", log, std::move(arg_vec));
+    wanted_hooks.emplace_back("rpcrt4.dll", "NdrAsyncClientCall", log, rpc_call_args());
+    wanted_hooks.emplace_back("rpcrt4.dll", "NdrAsyncClientCall2", log, rpc_call_args());
+    wanted_hooks.emplace_back("rpcrt4.dll", "NdrClientCall", log, rpc_call_args());
+    wanted_hooks.emplace_back("rpcrt4.dll", "NdrClientCall2", log, rpc_call_args());
+    wanted_hooks.emplace_back("rpcrt4.dll", "NdrClientCall3", log, rpc_call3_args());
+    wanted_hooks.emplace_back("rpcrt4.dll", "NdrClientCall4", log, rpc_call_args());
 
     usermode_cb_registration reg =
     {
@@ -409,22 +547,7 @@ rpcmon::rpcmon(drakvuf_t drakvuf, output_format_t output)
         .post_cb = on_dll_hooked,
         .extra = (void*)this
     };
-
-    usermode_reg_status_t status = drakvuf_register_usermode_callback(drakvuf, &reg);
-
-    switch (status)
-    {
-        case USERMODE_REGISTER_SUCCESS:
-            // success, nothing to do
-            break;
-        case USERMODE_ARCH_UNSUPPORTED:
-        case USERMODE_OS_UNSUPPORTED:
-            PRINT_DEBUG("[RPCMON] Usermode hooking is not supported on this architecture/bitness/os version, these features will be disabled\n");
-            break;
-        default:
-            PRINT_DEBUG("[RPCMON] Failed to subscribe to libusermode\n");
-            throw -1;
-    }
+    drakvuf_register_usermode_callback(drakvuf, &reg);
 }
 
 rpcmon::~rpcmon()
