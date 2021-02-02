@@ -290,7 +290,6 @@ bool dump_memory_region(
         goto done;
 
     display_file = (const char*)file;
-    g_free((gpointer)chk_str);
 
     if (rename(tmp_file_path, file_path) != 0)
         goto done;
@@ -353,7 +352,7 @@ done:
     free(tmp_file_path);
     free(metafile);
     g_free(access_ptrs);
-
+    g_checksum_free(checksum);
     return ret;
 }
 
