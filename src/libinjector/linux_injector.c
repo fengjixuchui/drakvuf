@@ -8,7 +8,7 @@
  * CLARIFICATIONS AND EXCEPTIONS DESCRIBED HEREIN.  This guarantees your   *
  * right to use, modify, and redistribute this software under certain      *
  * conditions.  If you wish to embed DRAKVUF technology into proprietary   *
- * software, alternative licenses can be aquired from the author.          *
+ * software, alternative licenses can be acquired from the author.         *
  *                                                                         *
  * Note that the GPL places important restrictions on "derivative works",  *
  * yet it does not provide a detailed definition of that term.  To avoid   *
@@ -277,6 +277,8 @@ static bool setup_linux_int3_trap(injector_t injector, drakvuf_trap_info_t* info
     injector->bp.breakpoint.dtb = info->regs->cr3;
     injector->bp.breakpoint.addr_type = ADDR_VA;
     injector->bp.breakpoint.addr = bp_addr;
+    injector->bp.ttl = UNLIMITED_TTL;
+    injector->bp.ah_cb = NULL;
 
     return drakvuf_add_trap(injector->drakvuf, &injector->bp);
 }
@@ -596,6 +598,7 @@ static bool setup_linux_int3_trap_in_userspace(injector_t injector, drakvuf_trap
     new_trap->breakpoint.addr = bp_addr;
     new_trap->cb = wait_for_process_in_userspace;
     new_trap->data = injector;
+    new_trap->ttl = UNLIMITED_TTL;
 
     if (!drakvuf_add_trap(injector->drakvuf, new_trap))
         return false;
@@ -653,7 +656,7 @@ static bool inject(drakvuf_t drakvuf, injector_t injector)
         .type = REGISTER,
         .reg = CR3,
         .cb = wait_for_target_linux_process_cb,
-        .data = injector,
+        .data = injector
     };
 
     if (!drakvuf_add_trap(drakvuf, &trap))

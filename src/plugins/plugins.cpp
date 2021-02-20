@@ -8,7 +8,7 @@
  * CLARIFICATIONS AND EXCEPTIONS DESCRIBED HEREIN.  This guarantees your   *
  * right to use, modify, and redistribute this software under certain      *
  * conditions.  If you wish to embed DRAKVUF technology into proprietary   *
- * software, alternative licenses can be aquired from the author.          *
+ * software, alternative licenses can be acquired from the author.         *
  *                                                                         *
  * Note that the GPL places important restrictions on "derivative works",  *
  * yet it does not provide a detailed definition of that term.  To avoid   *
@@ -130,6 +130,7 @@
 #include "procdump/procdump.h"
 #include "rpcmon/rpcmon.h"
 #include "tlsmon/tlsmon.h"
+#include "hyperbee/hyperbee.h"
 
 drakvuf_plugins::drakvuf_plugins(const drakvuf_t _drakvuf, output_format_t _output, os_t _os)
     : drakvuf{ _drakvuf }, output{ _output }, os{ _os }
@@ -321,6 +322,12 @@ int drakvuf_plugins::start(const drakvuf_plugin_t plugin_id,
                     memdump_config config =
                     {
                         .memdump_dir = options->memdump_dir,
+                        .memdump_disable_free_vm = options->memdump_disable_free_vm,
+                        .memdump_disable_protect_vm = options->memdump_disable_protect_vm,
+                        .memdump_disable_write_vm = options->memdump_disable_write_vm,
+                        .memdump_disable_terminate_proc = options->memdump_disable_terminate_proc,
+                        .memdump_disable_create_thread = options->memdump_disable_create_thread,
+                        .memdump_disable_set_thread = options->memdump_disable_set_thread,
                         .dll_hooks_list = options->dll_hooks_list,
                         .clr_profile = options->clr_profile,
                         .mscorwks_profile = options->mscorwks_profile,
@@ -368,6 +375,21 @@ int drakvuf_plugins::start(const drakvuf_plugin_t plugin_id,
                 {
                     this->plugins[plugin_id] = std::make_unique<tlsmon>(this->drakvuf, this->output);
                     break;
+                }
+#endif
+#ifdef ENABLE_PLUGIN_HYPERBEE
+                case PLUGIN_HYPERBEE:
+                {
+                    hyperbee_config_struct config =
+                    {
+                        .hyperbee_dump_dir = options->hyperbee_dump_dir,
+                        .hyperbee_filter_executable = options->hyperbee_filter_executable,
+                        .hyperbee_log_everything = options->hyperbee_log_everything,
+                        .hyperbee_dump_vad = options->hyperbee_dump_vad,
+                        .hyperbee_analyse_system_dll_vad = options->hyperbee_analyse_system_dll_vad,
+                        .hyperbee_default_benign = options->hyperbee_default_benign,
+                    };
+                    this->plugins[plugin_id] = std::make_unique<hyperbee>(this->drakvuf, &config, this->output);
                 }
 #endif
                 case __DRAKVUF_PLUGIN_LIST_MAX: /* fall-through */

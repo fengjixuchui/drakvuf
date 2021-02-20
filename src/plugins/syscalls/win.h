@@ -8,7 +8,7 @@
  * CLARIFICATIONS AND EXCEPTIONS DESCRIBED HEREIN.  This guarantees your   *
  * right to use, modify, and redistribute this software under certain      *
  * conditions.  If you wish to embed DRAKVUF technology into proprietary   *
- * software, alternative licenses can be aquired from the author.          *
+ * software, alternative licenses can be acquired from the author.         *
  *                                                                         *
  * Note that the GPL places important restrictions on "derivative works",  *
  * yet it does not provide a detailed definition of that term.  To avoid   *
@@ -2465,6 +2465,15 @@ SYSCALL(NtUserGetDC, HANDLE, 1,
 SYSCALL(NtUserGetKeyState, SHORT, 1,
         "VirtKey", "", DIR_IN, INT
        );
+SYSCALL(NtUserLoadKeyboardLayoutEx, NTSTATUS, 7,
+        "Handle", "", DIR_IN, HANDLE,
+        "offTable", "", DIR_IN, DWORD,
+        "puszKeyboardName", "", DIR_IN, PUNICODE_STRING,
+        "hKL", "", DIR_IN, HANDLE,
+        "puszKLID", "", DIR_IN, PUNICODE_STRING,
+        "dwKLID", "", DIR_IN, DWORD,
+        "Flags", "", DIR_IN, UINT
+       );
 SYSCALL(NtUserMessageCall, NTSTATUS, 7,
         "hWnd", "", DIR_IN, HWND,
         "Msg", "", DIR_IN, UINT,
@@ -2485,6 +2494,10 @@ SYSCALL(NtUserSetWindowsHookEx, HHOOK, 6,
         "HookId", "", DIR_IN, INT,
         "HookProc", "", DIR_IN, HOOKPROC,
         "Ansi", "", DIR_IN, BOOLEAN,
+       );
+SYSCALL(NtUserShowWindow, NTSTATUS, 2,
+        "hWnd", "", DIR_IN, HWND,
+        "nCmdShow", "", DIR_IN, LONG
        );
 SYSCALL(NtVdmControl, NTSTATUS, 2,
         "Service", "", DIR_IN, VDMSERVICECLASS,
@@ -3819,7 +3832,6 @@ SYSCALL(NtUserIsWindowGDIScaledDpiMessageEnabled, NTSTATUS, 0);
 SYSCALL(NtUserKillTimer, NTSTATUS, 0);
 SYSCALL(NtUserLayoutCompleted, NTSTATUS, 0);
 SYSCALL(NtUserLinkDpiCursor, NTSTATUS, 0);
-SYSCALL(NtUserLoadKeyboardLayoutEx, NTSTATUS, 0);
 SYSCALL(NtUserLockCursor, NTSTATUS, 0);
 SYSCALL(NtUserLockWindowStation, NTSTATUS, 0);
 SYSCALL(NtUserLockWindowUpdate, NTSTATUS, 0);
@@ -4028,7 +4040,6 @@ SYSCALL(NtUserShowCaret, NTSTATUS, 0);
 SYSCALL(NtUserShowCursor, NTSTATUS, 0);
 SYSCALL(NtUserShowScrollBar, NTSTATUS, 0);
 SYSCALL(NtUserShowSystemCursor, NTSTATUS, 0);
-SYSCALL(NtUserShowWindow, NTSTATUS, 0);
 SYSCALL(NtUserShowWindowAsync, NTSTATUS, 0);
 SYSCALL(NtUserShutdownBlockReasonCreate, NTSTATUS, 0);
 SYSCALL(NtUserShutdownBlockReasonQuery, NTSTATUS, 0);
