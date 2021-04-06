@@ -135,9 +135,9 @@ struct _GUID
         const int sz = 64;
         char stream[sz] = {0};
         snprintf(stream, sz, "\"%08X-%04hX-%04hX-%02hhX%02hhX-%02hhX%02hhX%02hhX%02hhX%02hhX%02hhX\"",
-                 Data1, Data2, Data3, Data4[0], Data4[1],
-                 Data4[2], Data4[3], Data4[4],
-                 Data4[5], Data4[6], Data4[7]);
+            Data1, Data2, Data3, Data4[0], Data4[1],
+            Data4[2], Data4[3], Data4[4],
+            Data4[5], Data4[6], Data4[7]);
 
         return std::string(stream);
     }
@@ -195,7 +195,7 @@ static std::optional<T> read_struct(vmi_instance_t vmi, access_context_t const* 
 template<typename T>
 static std::optional<T> read_struct(vmi_instance_t vmi, drakvuf_trap_info* info, addr_t arg)
 {
-    access_context_t ctx = {};
+    ACCESS_CONTEXT(ctx);
     ctx.translate_mechanism = VMI_TM_PROCESS_DTB;
     ctx.dtb = info->regs->cr3;
     ctx.addr = arg;
@@ -249,12 +249,11 @@ static std::optional<rpc_info_t> parse_MIDL_STUB_DESC(drakvuf_t drakvuf, drakvuf
     if (!rpc_interface_information_addr)
         return {};
 
-    access_context_t ctx =
-    {
+    ACCESS_CONTEXT(ctx,
         .translate_mechanism = VMI_TM_PROCESS_DTB,
         .dtb = info->regs->cr3,
-        .addr = rpc_interface_information_addr,
-    };
+        .addr = rpc_interface_information_addr
+    );
 
     auto vmi = vmi_lock_guard(drakvuf);
 
@@ -278,11 +277,10 @@ static std::optional<uint64_t> parse_FORMAT_STRING(drakvuf_t drakvuf, drakvuf_tr
 {
     auto vmi = vmi_lock_guard(drakvuf);
 
-    access_context_t ctx =
-    {
+    ACCESS_CONTEXT(ctx,
         .translate_mechanism = VMI_TM_PROCESS_DTB,
-        .dtb = info->regs->cr3,
-    };
+        .dtb = info->regs->cr3
+    );
 
     uint8_t oi_flags;
     ctx.addr = arg + Oi_FLAGS_FIELD_OFFSET;
@@ -290,8 +288,8 @@ static std::optional<uint64_t> parse_FORMAT_STRING(drakvuf_t drakvuf, drakvuf_tr
         return {};
 
     int proc_num_field_offset = (oi_flags & Oi_HAS_RPCFLAGS)
-                                ? Oi_PROCNUM_FIELD_OFFSET_WITH_RPCFLAGS
-                                : Oi_PROCNUM_FIELD_OFFSET_WITHOUT_RPCFLAGS;
+        ? Oi_PROCNUM_FIELD_OFFSET_WITH_RPCFLAGS
+        : Oi_PROCNUM_FIELD_OFFSET_WITHOUT_RPCFLAGS;
 
     uint16_t proc_num;
     ctx.addr = arg + proc_num_field_offset;
@@ -313,19 +311,23 @@ static std::optional<rpc_message_t> parse_RPC_MESSAGE(drakvuf_t drakvuf, drakvuf
 
     auto vmi = vmi_lock_guard(drakvuf);
 
-    access_context_t ctx =
-    {
-        .translate_mechanism = VMI_TM_PROCESS_DTB,
-        .dtb = info->regs->cr3,
-    };
+    ACCESS_CONTEXT(ctx, .translate_mechanism = VMI_TM_PROCESS_DTB,
+        .dtb = info->regs->cr3);
+    bool is32bit = (drakvuf_get_page_mode(drakvuf) != VMI_PM_IA32E) || drakvuf_is_wow64(drakvuf, info);
 
     uint32_t proc_num;
-    ctx.addr = arg + RPC_MESSAGE_PROCNUM_OFFSET;
+    if (is32bit)
+        ctx.addr = arg + RPC_MESSAGE_PROCNUM_OFFSET_X86;
+    else
+        ctx.addr = arg + RPC_MESSAGE_PROCNUM_OFFSET_X64;
     if (VMI_SUCCESS != vmi_read_32(vmi, &ctx, &proc_num))
         return {};
     r.ProcNum = proc_num;
 
-    ctx.addr = arg + RPC_MESSAGE_RPCINTERFACEINFO_OFFSET;
+    if (is32bit)
+        ctx.addr = arg + RPC_MESSAGE_RPCINTERFACEINFO_OFFSET_X86;
+    else
+        ctx.addr = arg + RPC_MESSAGE_RPCINTERFACEINFO_OFFSET_X64;
     auto rpc_iface = read_struct<_RPC_CLIENT_INTERFACE>(vmi, &ctx);
     if (!rpc_iface)
         return {};
@@ -350,8 +352,8 @@ static event_response_t usermode_return_hook_cb(drakvuf_t drakvuf, drakvuf_trap_
         const auto& args = ret_target->arguments;
         const auto& printers = ret_target->argument_printers;
         for (auto [arg, printer] = std::tuple(std::cbegin(args), std::cbegin(printers));
-             arg != std::cend(args) && printer != std::cend(printers);
-             ++arg, ++printer)
+            arg != std::cend(args) && printer != std::cend(printers);
+            ++arg, ++printer)
         {
             fmt_args.push_back(fmt::Rstr((*printer)->print(drakvuf, info, *arg)));
 
@@ -390,13 +392,13 @@ static event_response_t usermode_return_hook_cb(drakvuf_t drakvuf, drakvuf_trap_
     }
 
     fmt::print(plugin->m_output_format, "rpcmon", drakvuf, info,
-               keyval("Event", fmt::Qstr("api_called")),
-               keyval("CalledFrom", fmt::Xval(info->regs->rip)),
-               keyval("ReturnValue", fmt::Xval(info->regs->rax)),
-               keyval("Arguments", fmt_args),
-               keyval("Extra", fmt_extra),
-               keyval("ExtraNum", fmt_extra_num)
-              );
+        keyval("Event", fmt::Qstr("api_called")),
+        keyval("CalledFrom", fmt::Xval(info->regs->rip)),
+        keyval("ReturnValue", fmt::Xval(info->regs->rax)),
+        keyval("Arguments", fmt_args),
+        keyval("Extra", fmt_extra),
+        keyval("ExtraNum", fmt_extra_num)
+    );
 
     drakvuf_remove_trap(drakvuf, info->trap, (drakvuf_trap_free_t)free_trap);
     return VMI_EVENT_RESPONSE_NONE;
@@ -405,6 +407,9 @@ static event_response_t usermode_return_hook_cb(drakvuf_t drakvuf, drakvuf_trap_
 static event_response_t usermode_hook_cb(drakvuf_t drakvuf, drakvuf_trap_info* info)
 {
     hook_target_entry_t* target = (hook_target_entry_t*)info->trap->data;
+
+    if (target->pid != info->attached_proc_data.pid)
+        return VMI_EVENT_RESPONSE_NONE;
 
     auto vmi = vmi_lock_guard(drakvuf);
     vmi_v2pcache_flush(vmi, info->regs->cr3);
