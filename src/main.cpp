@@ -124,6 +124,12 @@ void close_handler(int signal)
     drakvuf->interrupt(signal);
 }
 
+void timeout_handler(int signal)
+{
+    (void)signal;
+    drakvuf->interrupt(SIGDRAKVUFTIMEOUT);
+}
+
 static inline bool disable_plugin(char* optarg, bool* plugin_list)
 {
     for (int i=0; i<__DRAKVUF_PLUGIN_LIST_MAX; i++)
@@ -297,6 +303,10 @@ static void print_usage()
         "\t --codemon-default-benign\n"
         "\t                           By default we assume everything to be malware. If this flag is enabled we assume all analysed memory areas to be goodware instead. This flag should be just set if a classifier is integrated\n"
 #endif
+#ifdef ENABLE_PLUGIN_EXPLOITMON
+        "\t --exploitmon-kernel2user-detect\n"
+        "\t                           Detect kernel thread execution in user mode. This degrades performance.\n"
+#endif
         "\t -h, --help                Show this help\n"
     );
 }
@@ -318,7 +328,6 @@ int main(int argc, char** argv)
     char* target_process = nullptr;
     vmi_pid_t injection_pid = -1;
     uint32_t injection_thread = 0;
-    struct sigaction act;
     output_format_t output = OUTPUT_DEFAULT;
     bool plugin_list[] = {[0 ... __DRAKVUF_PLUGIN_LIST_MAX-1] = 1};
     int wait_stop_plugins = 0;
@@ -369,6 +378,7 @@ int main(int argc, char** argv)
         opt_memdump_disable_terminate_proc,
         opt_memdump_disable_create_thread,
         opt_memdump_disable_set_thread,
+        opt_memdump_disable_shellcode_detect,
         opt_dll_hooks_list,
         opt_procdump_dir,
         opt_compress_procdumps,
@@ -387,6 +397,7 @@ int main(int argc, char** argv)
         opt_codemon_analyse_system_dll_vad,
         opt_codemon_default_benign,
         opt_context_interception_processes,
+        opt_exploitmon_kernel2user_detect,
     };
     const option long_opts[] =
     {
@@ -416,6 +427,7 @@ int main(int argc, char** argv)
         {"memdump-disable-terminate-proc", no_argument, NULL, opt_memdump_disable_terminate_proc},
         {"memdump-disable-create-thread", no_argument, NULL, opt_memdump_disable_create_thread},
         {"memdump-disable-set-thread", no_argument, NULL, opt_memdump_disable_set_thread},
+        {"memdump-disable-shellcode-detect", no_argument, NULL, opt_memdump_disable_shellcode_detect},
         {"dll-hooks-list", required_argument, NULL, opt_dll_hooks_list},
         {"procdump-dir", required_argument, NULL, opt_procdump_dir},
         {"compress-procdumps", no_argument, NULL, opt_compress_procdumps},
@@ -435,6 +447,7 @@ int main(int argc, char** argv)
         {"codemon-default-benign", no_argument, NULL, opt_codemon_default_benign},
         {"context-based-interception", no_argument, NULL, 'C'},
         {"context-process", required_argument, NULL, opt_context_interception_processes},
+        {"exploitmon-kernel2user-detect", no_argument, NULL, opt_exploitmon_kernel2user_detect},
 
 
 
@@ -660,6 +673,9 @@ int main(int argc, char** argv)
             case opt_memdump_disable_set_thread:
                 options.memdump_disable_set_thread = true;
                 break;
+            case opt_memdump_disable_shellcode_detect:
+                options.memdump_disable_shellcode_detect = true;
+                break;
 #endif
 #ifdef ENABLE_PLUGIN_PROCDUMP
             case opt_procdump_dir:
@@ -687,6 +703,11 @@ int main(int argc, char** argv)
                 break;
             case opt_codemon_default_benign:
                 options.codemon_default_benign = true;
+                break;
+#endif
+#ifdef ENABLE_PLUGIN_EXPLOITMON
+            case opt_exploitmon_kernel2user_detect:
+                options.exploitmon_kernel2user_detect = true;
                 break;
 #endif
             case 'h':
@@ -733,13 +754,19 @@ int main(int argc, char** argv)
     PRINT_DEBUG("DRAKVUF initializated\n");
 
     /* for a clean exit */
+    struct sigaction act;
     act.sa_handler = close_handler;
     act.sa_flags = 0;
     sigemptyset(&act.sa_mask);
     sigaction(SIGHUP, &act, nullptr);
     sigaction(SIGTERM, &act, nullptr);
     sigaction(SIGINT, &act, nullptr);
-    sigaction(SIGALRM, &act, nullptr);
+
+    struct sigaction act_timer;
+    act_timer.sa_handler = timeout_handler;
+    act_timer.sa_flags = 0;
+    sigemptyset(&act_timer.sa_mask);
+    sigaction(SIGALRM, &act_timer, nullptr);
 
     vmi_pid_t injected_pid = 0;
     if (injection_pid > 0 && inject_file)

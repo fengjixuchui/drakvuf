@@ -119,7 +119,7 @@ public:
      */
     template<typename Params = CallResult>
     [[nodiscard]]
-    static auto create(drakvuf_t, drakvuf_trap_info* info, cb_wrapper_t cb)
+    static auto create(drakvuf_t, drakvuf_trap_info* info, cb_wrapper_t cb, int ttl)
     -> std::unique_ptr<ReturnHook>;
 
     /**
@@ -160,14 +160,14 @@ protected:
 };
 
 template<typename Params>
-auto ReturnHook::create(drakvuf_t drakvuf, drakvuf_trap_info* info, cb_wrapper_t cb)
+auto ReturnHook::create(drakvuf_t drakvuf, drakvuf_trap_info* info, cb_wrapper_t cb, int ttl)
 -> std::unique_ptr<ReturnHook>
 {
     PRINT_DEBUG("[LIBHOOK] creating return hook\n");
 
     // not using std::make_unique because ctor is private
     auto hook = std::unique_ptr<ReturnHook>(new ReturnHook(drakvuf, cb));
-    hook->trap_ = new drakvuf_trap_t;
+    hook->trap_ = new drakvuf_trap_t();
 
     auto ret_addr = drakvuf_get_function_return_address(drakvuf, info);
     if (!ret_addr)
@@ -188,6 +188,7 @@ auto ReturnHook::create(drakvuf_t drakvuf, drakvuf_trap_info* info, cb_wrapper_t
     hook->trap_->type = BREAKPOINT;
     hook->trap_->name = "ReturnHook";
     hook->trap_->ah_cb = nullptr;
+    hook->trap_->ttl = ttl;
     hook->trap_->cb = [](drakvuf_t drakvuf, drakvuf_trap_info_t* info)
     {
         return GetTrapHook<ReturnHook>(info)->callback_(drakvuf, info);

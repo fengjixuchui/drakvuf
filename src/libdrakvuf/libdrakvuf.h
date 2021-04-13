@@ -142,6 +142,7 @@ typedef enum lookup_type
     LOOKUP_DTB,
     LOOKUP_PID,
     LOOKUP_NAME,
+    LOOKUP_KERNEL,
 } lookup_type_t;
 
 typedef enum addr_type
@@ -149,7 +150,8 @@ typedef enum addr_type
     __INVALID_ADDR_TYPE,
     ADDR_RVA,
     ADDR_VA,
-    ADDR_PA
+    ADDR_PA,
+    ADDR_SYMBOL,
 } addr_type_t;
 
 typedef enum trap_type
@@ -208,6 +210,7 @@ typedef struct drakvuf_trap_info
 struct drakvuf_trap
 {
     trap_type_t type;
+    uint64_t id;
     event_response_t (*cb)(drakvuf_t, drakvuf_trap_info_t*);
     void* data;
 
@@ -239,6 +242,7 @@ struct drakvuf_trap
             {
                 addr_t rva;
                 addr_t addr;
+                const char* symbol;
             };
         } breakpoint;
 
@@ -438,6 +442,12 @@ char* drakvuf_get_process_commandline(drakvuf_t drakvuf,
 bool drakvuf_get_process_pid(drakvuf_t drakvuf,
     addr_t process_base,
     vmi_pid_t* pid) NOEXCEPT;
+
+bool drakvuf_get_process_by_handle(drakvuf_t drakvuf,
+    drakvuf_trap_info_t* info,
+    uint64_t handle,
+    addr_t* process,
+    addr_t* dtb);
 
 bool drakvuf_get_process_thread_id( drakvuf_t drakvuf,
     addr_t process_base,
