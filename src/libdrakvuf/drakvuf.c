@@ -166,7 +166,7 @@ void drakvuf_close(drakvuf_t drakvuf, const bool pause)
 bool drakvuf_init(drakvuf_t* drakvuf, const char* domain, const char* json_kernel_path, const char* json_wow_path, bool _verbose, bool libvmi_conf, addr_t kpgd, bool fast_singlestep, uint64_t limited_traps_ttl)
 {
 
-    if ( !domain || !json_kernel_path )
+    if ( !domain )
         return 0;
 
 #ifdef DRAKVUF_DEBUG
@@ -176,11 +176,11 @@ bool drakvuf_init(drakvuf_t* drakvuf, const char* domain, const char* json_kerne
     *drakvuf = (drakvuf_t)g_try_malloc0(sizeof(struct drakvuf));
 
     (*drakvuf)->limited_traps_ttl = limited_traps_ttl;
-
-    (*drakvuf)->json_kernel_path = g_strdup(json_kernel_path);
-
     (*drakvuf)->context_switch_intercept_processes = NULL;
     (*drakvuf)->enable_cr3_based_interception = false;
+
+    if ( json_kernel_path )
+        (*drakvuf)->json_kernel_path = g_strdup(json_kernel_path);
 
     if ( json_wow_path )
     {
@@ -224,8 +224,7 @@ bool drakvuf_init(drakvuf_t* drakvuf, const char* domain, const char* json_kerne
         case VMI_OS_UNKNOWN: /* fall-through */
         case VMI_OS_FREEBSD: /* fall-through */
         default:
-            fprintf(stderr, "The Rekall profile describes an unknown operating system kernel!\n");
-            goto err;
+            break;
     }
 
     PRINT_DEBUG("libdrakvuf initialized\n");
@@ -362,7 +361,10 @@ bool inject_trap_breakpoint(drakvuf_t drakvuf, drakvuf_trap_t* trap)
         {
             addr_t trap_pa;
             if ( VMI_FAILURE == vmi_pagetable_lookup(drakvuf->vmi, trap->breakpoint.dtb, trap->breakpoint.addr, &trap_pa) )
+            {
+                PRINT_DEBUG("Breakpoint VA 0x%" PRIx64" not found in pagetable at 0x%" PRIx64 "\n", trap->breakpoint.addr, trap->breakpoint.dtb);
                 return 0;
+            }
 
             PRINT_DEBUG("Breakpoint VA 0x%" PRIx64" -> PA 0x%" PRIx64 "\n", trap->breakpoint.addr, trap_pa);
 
@@ -422,14 +424,12 @@ bool drakvuf_add_trap(drakvuf_t drakvuf, drakvuf_trap_t* trap)
     if (!trap || !trap->cb)
         return 0;
 
-    if (!trap->id)
-        trap->id = ++drakvuf->trap_counter;
     if (!trap->ah_cb)
         trap->ah_cb = drakvuf_unhook_trap;
 
-    if (g_hash_table_lookup(drakvuf->remove_traps, GSIZE_TO_POINTER(trap->id)))
+    if (g_hash_table_lookup(drakvuf->remove_traps, &trap))
     {
-        g_hash_table_remove(drakvuf->remove_traps, GSIZE_TO_POINTER(trap->id));
+        g_hash_table_remove(drakvuf->remove_traps, &trap);
         return 1;
     }
 
@@ -477,7 +477,9 @@ void drakvuf_remove_trap(drakvuf_t drakvuf, drakvuf_trap_t* trap,
             free_wrapper = (struct free_trap_wrapper*)g_slice_alloc0(sizeof(struct free_trap_wrapper));
             free_wrapper->free_routine = free_routine;
             free_wrapper->trap = trap;
-            g_hash_table_insert(drakvuf->remove_traps, GSIZE_TO_POINTER(trap->id), free_wrapper);
+            g_hash_table_insert(drakvuf->remove_traps,
+                g_memdup(&trap, sizeof(void*)),
+                free_wrapper);
         }
 
         free_wrapper->counter++;
@@ -928,10 +930,17 @@ static bool is_valid_vcpu(drakvuf_t drakvuf, unsigned int vcpu)
     return vcpu < MAX_DRAKVUF_VCPU && drakvuf->vcpus > vcpu;
 }
 
-bool drakvuf_enable_ipt(drakvuf_t drakvuf, unsigned int vcpu, uint8_t** buf, uint64_t* size)
+bool drakvuf_enable_ipt(drakvuf_t drakvuf, unsigned int vcpu, uint8_t** buf, uint64_t* size, uint64_t flags)
 {
     if ( !is_valid_vcpu(drakvuf, vcpu) )
         return false;
+
+    uint64_t rtit_flags = 0;
+    rtit_flags |= (flags & DRAKVUF_IPT_BRANCH_EN) ? RTIT_CTL_BRANCH_EN : 0;
+    rtit_flags |= (flags & DRAKVUF_IPT_TRACE_OS) ? RTIT_CTL_OS : 0;
+    rtit_flags |= (flags & DRAKVUF_IPT_TRACE_USR) ? RTIT_CTL_USR : 0;
+    rtit_flags |= (flags & DRAKVUF_IPT_DIS_RETC) ? RTIT_CTL_DIS_RETC : 0;
+    xen_set_ipt_option(drakvuf->xen, drakvuf->domID, vcpu, MSR_RTIT_CTL, rtit_flags);
 
     if ( !xen_enable_ipt(drakvuf->xen, drakvuf->domID, vcpu, &drakvuf->ipt_state[vcpu]) )
         return false;
