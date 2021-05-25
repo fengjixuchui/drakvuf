@@ -1564,11 +1564,9 @@ void drakvuf_toggle_context_based_interception(drakvuf_t drakvuf)
     vmi_resume_vm(drakvuf->vmi);
 }
 
-bool init_vmi(drakvuf_t drakvuf, bool libvmi_conf, bool fast_singlestep)
+bool init_vmi(drakvuf_t drakvuf, bool fast_singlestep)
 {
-
     int rc;
-    uint64_t flags = VMI_OS_WINDOWS == drakvuf->os ? VMI_PM_INITFLAG_TRANSITION_PAGES : 0;
 
     vmi_init_data_t* init_data = (vmi_init_data_t*)g_try_malloc0(sizeof(vmi_init_data_t) + sizeof(vmi_init_data_entry_t));
     if ( !init_data )
@@ -1590,46 +1588,13 @@ bool init_vmi(drakvuf_t drakvuf, bool libvmi_conf, bool fast_singlestep)
     g_free(init_data);
     if ( VMI_FAILURE == status )
     {
-        printf("Failed to init LibVMI library.\n");
+        fprintf(stderr, "Failed to init LibVMI library.\n");
         return 0;
     }
     PRINT_DEBUG("init_vmi: initializing vmi done\n");
 
-    if (VMI_PM_UNKNOWN == vmi_init_paging(drakvuf->vmi, flags) )
-    {
-        printf("Failed to init LibVMI paging.\n");
-        return 0;
-    }
-    PRINT_DEBUG("init_vmi: initializing vmi paging done\n");
-
-    if (libvmi_conf)
-        drakvuf->os = vmi_init_os(drakvuf->vmi, VMI_CONFIG_GLOBAL_FILE_ENTRY, NULL, NULL);
-    else if ( drakvuf->json_kernel_path )
-    {
-        GHashTable* config = g_hash_table_new(g_str_hash, g_str_equal);
-        g_hash_table_insert(config, "volatility_ist", drakvuf->json_kernel_path);
-        if (drakvuf->kpgd)
-        {
-            g_hash_table_insert(config, "kpgd", &drakvuf->kpgd);
-        }
-        drakvuf->os = vmi_init_os(drakvuf->vmi, VMI_CONFIG_GHASHTABLE, config, NULL);
-        g_hash_table_destroy(config);
-    }
-    else
-    {
-        vmi_init_paging(drakvuf->vmi, 0);
-        drakvuf->os = VMI_OS_UNKNOWN;
-    }
-
-    PRINT_DEBUG("init_vmi: initializing vmi OS bits done: %u\n", drakvuf->os);
-
-    drakvuf->pm = vmi_get_page_mode(drakvuf->vmi, 0);
-    drakvuf->address_width = vmi_get_address_width(drakvuf->vmi);
     drakvuf->vcpus = vmi_get_num_vcpus(drakvuf->vmi);
     drakvuf->init_memsize = xen_get_maxmemkb(drakvuf->xen, drakvuf->domID);
-
-    if ( !drakvuf->kpgd && drakvuf->os != VMI_OS_UNKNOWN )
-        vmi_get_offset(drakvuf->vmi, "kpgd", &drakvuf->kpgd);
 
     if ( xc_domain_maximum_gpfn(drakvuf->xen->xc, drakvuf->domID, &drakvuf->max_gpfn) < 0 )
         return 0;
@@ -1789,16 +1754,27 @@ void close_vmi(drakvuf_t drakvuf)
 
     drakvuf_pause(drakvuf);
 
-    if (VMI_FAILURE == vmi_slat_switch(drakvuf->vmi, 0))
-        PRINT_DEBUG("Failed to switch on default view\n");
-    if (drakvuf->altp2m_idx && VMI_FAILURE == vmi_slat_destroy(drakvuf->vmi, drakvuf->altp2m_idx))
-        fprintf(stderr, "Altp2m view X %u destruction failed\n", drakvuf->altp2m_idx);
-    if (drakvuf->altp2m_idr && VMI_FAILURE == vmi_slat_destroy(drakvuf->vmi, drakvuf->altp2m_idr))
-        fprintf(stderr, "Altp2m view R %u destruction failed\n", drakvuf->altp2m_idr);
-    if (drakvuf->altp2m_idrx && VMI_FAILURE == vmi_slat_destroy(drakvuf->vmi, drakvuf->altp2m_idrx))
-        fprintf(stderr, "Altp2m view RX %u destruction failed\n", drakvuf->altp2m_idrx);
-    if (VMI_FAILURE == vmi_slat_set_domain_state(drakvuf->vmi, false))
-        PRINT_DEBUG("Failed to disable alternate SLAT\n");
+    if (drakvuf->vmi)
+    {
+        // clear the ring
+        vmi_events_listen(drakvuf->vmi, 0);
+
+        if (VMI_FAILURE == vmi_slat_switch(drakvuf->vmi, 0))
+            fprintf(stderr, "Failed to switch on default view\n");
+        if (drakvuf->altp2m_idx && VMI_FAILURE == vmi_slat_destroy(drakvuf->vmi, drakvuf->altp2m_idx))
+            fprintf(stderr, "Altp2m view X %u destruction failed\n", drakvuf->altp2m_idx);
+        if (drakvuf->altp2m_idr && VMI_FAILURE == vmi_slat_destroy(drakvuf->vmi, drakvuf->altp2m_idr))
+            fprintf(stderr, "Altp2m view R %u destruction failed\n", drakvuf->altp2m_idr);
+        if (drakvuf->altp2m_idrx && VMI_FAILURE == vmi_slat_destroy(drakvuf->vmi, drakvuf->altp2m_idrx))
+            fprintf(stderr, "Altp2m view RX %u destruction failed\n", drakvuf->altp2m_idrx);
+        if (VMI_FAILURE == vmi_slat_set_domain_state(drakvuf->vmi, false))
+            fprintf(stderr, "Failed to disable alternate SLAT\n");
+
+        // clear the generic mem_event to speed up shutdown
+        vmi_clear_event(drakvuf->vmi, &drakvuf->mem_event, NULL);
+        vmi_destroy(drakvuf->vmi);
+        drakvuf->vmi = NULL;
+    }
 
     if (drakvuf->memaccess_lookup_gfn)
     {
@@ -1903,14 +1879,6 @@ void close_vmi(drakvuf_t drakvuf)
     drakvuf->altp2m_idx = 0;
     drakvuf->altp2m_idr = 0;
     drakvuf->sink_page_gfn = 0;
-
-    if (drakvuf->vmi)
-    {
-        // clear the generic mem_event to speed up shutdown
-        vmi_clear_event(drakvuf->vmi, &drakvuf->mem_event, NULL);
-        vmi_destroy(drakvuf->vmi);
-        drakvuf->vmi = NULL;
-    }
 
     drakvuf_resume(drakvuf);
 

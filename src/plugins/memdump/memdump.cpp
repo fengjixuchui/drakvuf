@@ -302,48 +302,33 @@ bool dump_memory_region(
     ret = true;
 
 printout:
-    if (print_extras)
+    // scoping the block as goto jumps
+    // bypasses variable initialization
     {
-        target_pid = fmt::Nval(extras->write_virtual_memory_extras.target_pid);
-        write_addr = fmt::Xval(extras->write_virtual_memory_extras.base_address, false);
-    }
-    if (plugin->m_output_format == OUTPUT_KV)
-    {
-        kvfmt::print("memdump", drakvuf, info,
-            keyval("DumpReason", fmt::Qstr(reason)),
-            keyval("DumpPID", fmt::Nval(info->attached_proc_data.pid)),
-            keyval("DumpAddr", fmt::Xval(ctx->addr, false)),
-            keyval("DumpSize", fmt::Xval(len_bytes)),
-            keyval("DumpFilename", fmt::Qstr(display_file)),
-            keyval("SN", fmt::Nval(plugin->dumps_count)),
-            keyval("TargetPID", target_pid),
-            keyval("WriteAddr", write_addr)
-        );
-    }
-    else if (plugin->m_output_format == OUTPUT_JSON)
-    {
-        jsonfmt::print("memdump", drakvuf, info,
-            keyval("DumpReason", fmt::Qstr(reason)),
-            keyval("DumpPID", fmt::Nval(info->attached_proc_data.pid)),
-            keyval("DumpAddr", fmt::Xval(ctx->addr)),
-            keyval("DumpSize", fmt::Xval(len_bytes)),
-            keyval("DumpFilename", fmt::Qstr(display_file)),
-            keyval("DumpsCount", fmt::Nval(plugin->dumps_count)),
-            keyval("TargetPID", target_pid),
-            keyval("WriteAddr", write_addr)
-        );
-    }
-    else
-    {
-        fmt::print(plugin->m_output_format, "memdump", drakvuf, info,
-            keyval("Reason", fmt::Qstr(reason)),
-            keyval("Process", fmt::Nval(info->attached_proc_data.pid)),
-            keyval("Base", fmt::Xval(ctx->addr)),
-            keyval("Size", fmt::Nval(len_bytes)),
-            keyval("File", fmt::Qstr(display_file)),
-            keyval("TargetPID", target_pid),
-            keyval("WriteAddr", write_addr)
-        );
+        auto default_print=std::make_tuple(
+                keyval("DumpReason", fmt::Qstr(reason)),
+                keyval("DumpPID", fmt::Nval(info->attached_proc_data.pid)),
+                keyval("DumpAddr", fmt::Xval(ctx->addr, false)),
+                keyval("DumpSize", fmt::Xval(len_bytes)),
+                keyval("DumpFilename", fmt::Qstr(display_file)),
+                keyval("DumpsCount", fmt::Nval(plugin->dumps_count))
+            );
+        if (print_extras)
+        {
+            target_pid = fmt::Nval(extras->write_virtual_memory_extras.target_pid);
+            write_addr = fmt::Xval(extras->write_virtual_memory_extras.base_address, false);
+            auto extra_arguments=std::make_tuple(
+                    keyval("TargetPID", target_pid),
+                    keyval("WriteAddr", write_addr)
+                );
+            fmt::print(plugin->m_output_format, "memdump", drakvuf, info,
+                std::tuple_cat(default_print, extra_arguments)
+            );
+        }
+        else
+        {
+            fmt::print(plugin->m_output_format, "memdump", drakvuf, info, default_print);
+        }
     }
 
 done:
@@ -556,12 +541,11 @@ static event_response_t shellcode_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* inf
     auto plugin = get_trap_plugin<memdump>(info);
 
     vmi_lock_guard lg(drakvuf);
-    access_context_t ctx =
-    {
+    ACCESS_CONTEXT(ctx,
         .translate_mechanism = VMI_TM_PROCESS_DTB,
         .dtb = info->regs->cr3,
         .addr = base_address_ptr
-    };
+    );
 
     addr_t base_address;
     if (VMI_SUCCESS != vmi_read_addr(lg.vmi, &ctx, &base_address))
