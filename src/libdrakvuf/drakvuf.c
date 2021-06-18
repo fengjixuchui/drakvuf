@@ -425,8 +425,16 @@ bool inject_trap_reg(drakvuf_t drakvuf, drakvuf_trap_t* trap)
         drakvuf->cr3 = g_slist_prepend(drakvuf->cr3, trap);
         return 1;
     }
+    else if (MSR_ALL == trap->reg)
+    {
+        if ( !drakvuf->msr && !control_msr_trap(drakvuf, 1) )
+            return 0;
 
-    fprintf(stderr, "Support for trapping requested register is not (yet) implemented!\n");
+        drakvuf->msr = g_slist_prepend(drakvuf->msr, trap);
+        return 1;
+    }
+    else
+        fprintf(stderr, "Support for trapping requested register is not (yet) implemented!\n");
 
     return 0;
 }
@@ -561,6 +569,11 @@ void drakvuf_force_resume (drakvuf_t drakvuf)
     xen_force_resume(drakvuf->xen, drakvuf->domID);
 }
 
+int drakvuf_send_qemu_monitor_command(drakvuf_t drakvuf, const char* in, char** out)
+{
+    return xen_send_qemu_monitor_command(drakvuf->xen, drakvuf->domID, in, out);
+}
+
 bool json_get_struct_members_array_rva(
     drakvuf_t drakvuf,
     json_object* json,
@@ -585,6 +598,11 @@ const char* drakvuf_get_json_wow_path(drakvuf_t drakvuf)
 json_object* drakvuf_get_json_wow(drakvuf_t drakvuf)
 {
     return drakvuf->json_wow;
+}
+
+uint16_t drakvuf_get_dom_id(drakvuf_t drakvuf)
+{
+    return drakvuf->domID;
 }
 
 addr_t drakvuf_get_kernel_base(drakvuf_t drakvuf)
